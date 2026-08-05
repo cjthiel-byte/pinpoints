@@ -25,5 +25,8 @@
     "react-dom": "^19.2.8",
     "tailwindcss": "^4.3.3",
     "wrangler": "^4.118.0"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2"
   }
 }

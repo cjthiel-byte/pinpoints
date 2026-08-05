@@ -3,7 +3,7 @@ import * as Cesium from 'cesium';
 import 'cesium/Build/Cesium/Widgets/widgets.css';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from '../lib/firebase';
-import { addCountryVisit, removeCountryVisit, subscribeToUserVisits } from '../lib/visits';
+import { addVisit, removeVisit, subscribeToUserVisits } from '../lib/visits';
 
 declare global {
 	interface Window {
@@ -17,9 +17,24 @@ const FILL_COLOR = Cesium.Color.fromCssColorString('#1e293b').withAlpha(0.45);
 const STROKE_COLOR = Cesium.Color.fromCssColorString('#64748b');
 const VISITED_COLOR = Cesium.Color.fromCssColorString('#3b82f6').withAlpha(0.75);
 
+// Below this camera height, clicking targets a country's first-level
+// subdivisions instead of the country itself.
+const ADMIN1_ZOOM_HEIGHT = 2_500_000;
+
+function preparePolygonEntities(dataSource: Cesium.GeoJsonDataSource) {
+	for (const entity of dataSource.entities.values) {
+		if (entity.polygon) {
+			entity.polygon.perPositionHeight = new Cesium.ConstantProperty(true);
+		}
+	}
+	return dataSource;
+}
+
 export default function Globe() {
 	const containerRef = useRef<HTMLDivElement>(null);
-	const dataSourceRef = useRef<Cesium.GeoJsonDataSource | null>(null);
+	const countriesDataSourceRef = useRef<Cesium.GeoJsonDataSource | null>(null);
+	const admin1CacheRef = useRef<Map<string, Cesium.GeoJsonDataSource>>(new Map());
+	const activeDrillCountryRef = useRef<string | null>(null);
 	const visitedIdsRef = useRef<Set<string>>(new Set());
 	const userIdRef = useRef<string | null>(null);
 
@@ -34,13 +49,22 @@ export default function Globe() {
 	}, [userId]);
 
 	function applyVisitedColors() {
-		const dataSource = dataSourceRef.current;
-		if (!dataSource) return;
-		for (const entity of dataSource.entities.values) {
-			if (!entity.polygon) continue;
-			const iso = entity.properties?.ISO_A3?.getValue();
-			const isVisited = !!iso && visitedIdsRef.current.has(iso);
-			entity.polygon.material = new Cesium.ColorMaterialProperty(isVisited ? VISITED_COLOR : FILL_COLOR);
+		const countriesDS = countriesDataSourceRef.current;
+		if (countriesDS) {
+			for (const entity of countriesDS.entities.values) {
+				if (!entity.polygon) continue;
+				const iso = entity.properties?.ISO_A3?.getValue();
+				const isVisited = !!iso && visitedIdsRef.current.has(iso);
+				entity.polygon.material = new Cesium.ColorMaterialProperty(isVisited ? VISITED_COLOR : FILL_COLOR);
+			}
+		}
+		for (const dataSource of admin1CacheRef.current.values()) {
+			for (const entity of dataSource.entities.values) {
+				if (!entity.polygon) continue;
+				const locationId = entity.properties?.LOCATION_ID?.getValue();
+				const isVisited = !!locationId && visitedIdsRef.current.has(locationId);
+				entity.polygon.material = new Cesium.ColorMaterialProperty(isVisited ? VISITED_COLOR : FILL_COLOR);
+			}
 		}
 	}
 
@@ -78,21 +102,100 @@ export default function Globe() {
 		let handler: Cesium.ScreenSpaceEventHandler | undefined;
 		let cancelled = false;
 
+		function setCountryEntityVisible(countryCode: string, visible: boolean) {
+			const countriesDS = countriesDataSourceRef.current;
+			if (!countriesDS) return;
+			for (const entity of countriesDS.entities.values) {
+				if (entity.properties?.ISO_A3?.getValue() === countryCode) {
+					entity.show = visible;
+				}
+			}
+		}
+
+		async function drillIntoCountry(countryCode: string) {
+			const previous = activeDrillCountryRef.current;
+			if (previous === countryCode) return;
+
+			if (previous) {
+				const previousDS = admin1CacheRef.current.get(previous);
+				if (previousDS) previousDS.show = false;
+				setCountryEntityVisible(previous, true);
+			}
+
+			activeDrillCountryRef.current = countryCode;
+			setCountryEntityVisible(countryCode, false);
+
+			let dataSource = admin1CacheRef.current.get(countryCode);
+			if (!dataSource) {
+				try {
+					dataSource = preparePolygonEntities(
+						await Cesium.GeoJsonDataSource.load(`/geo/admin1/${countryCode}.geojson`, {
+							stroke: STROKE_COLOR,
+							fill: FILL_COLOR,
+							strokeWidth: 1,
+							clampToGround: false,
+						}),
+					);
+				} catch {
+					// No admin-1 data for this country (e.g. Vatican City) — keep its flat polygon visible.
+					setCountryEntityVisible(countryCode, true);
+					activeDrillCountryRef.current = null;
+					return;
+				}
+				if (cancelled) return;
+				admin1CacheRef.current.set(countryCode, dataSource);
+				viewer.dataSources.add(dataSource);
+			}
+
+			dataSource.show = true;
+			applyVisitedColors();
+		}
+
+		function exitDrillMode() {
+			const active = activeDrillCountryRef.current;
+			if (!active) return;
+			const activeDS = admin1CacheRef.current.get(active);
+			if (activeDS) activeDS.show = false;
+			setCountryEntityVisible(active, true);
+			activeDrillCountryRef.current = null;
+		}
+
+		function handleZoomChange() {
+			const height = viewer.camera.positionCartographic.height;
+
+			if (height >= ADMIN1_ZOOM_HEIGHT) {
+				exitDrillMode();
+				return;
+			}
+
+			const canvas = viewer.scene.canvas;
+			const center = new Cesium.Cartesian2(canvas.clientWidth / 2, canvas.clientHeight / 2);
+			const picked = viewer.scene.pick(center);
+			if (!Cesium.defined(picked) || !(picked.id instanceof Cesium.Entity)) return;
+
+			const countryCode = picked.id.properties?.ISO_A3?.getValue() ?? picked.id.properties?.ADM0_A3?.getValue();
+			if (countryCode && countryCode !== activeDrillCountryRef.current) {
+				drillIntoCountry(countryCode);
+			}
+		}
+
 		Cesium.GeoJsonDataSource.load('/geo/countries.geojson', {
 			stroke: STROKE_COLOR,
 			fill: FILL_COLOR,
 			strokeWidth: 1,
 			clampToGround: false,
 		}).then((dataSource) => {
-			for (const entity of dataSource.entities.values) {
-				if (entity.polygon) {
-					entity.polygon.perPositionHeight = new Cesium.ConstantProperty(true);
-				}
-			}
+			preparePolygonEntities(dataSource);
 			if (cancelled) return;
 			viewer.dataSources.add(dataSource);
-			dataSourceRef.current = dataSource;
+			countriesDataSourceRef.current = dataSource;
 			applyVisitedColors();
+
+			viewer.camera.moveEnd.addEventListener(handleZoomChange);
+			if (import.meta.env.DEV) {
+				(window as any).__viewer = viewer;
+				(window as any).__Cesium = Cesium;
+			}
 
 			handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
 			handler.setInputAction((movement: Cesium.ScreenSpaceEventHandler.PositionedEvent) => {
@@ -103,24 +206,47 @@ export default function Globe() {
 				if (!Cesium.defined(picked) || !(picked.id instanceof Cesium.Entity)) return;
 
 				const entity = picked.id;
-				const iso = entity.properties?.ISO_A3?.getValue();
-				if (!iso || !entity.polygon) return;
+				if (!entity.polygon) return;
 
-				const displayName = entity.properties?.NAME?.getValue() ?? iso;
+				const props = entity.properties;
+				const subdivisionLocationId = props?.LOCATION_ID?.getValue();
 
-				if (visitedIdsRef.current.has(iso)) {
-					removeCountryVisit(currentUserId, iso);
+				let locationId: string;
+				let locationType: 'country' | 'level1';
+				let countryCode: string;
+				let displayName: string;
+
+				if (subdivisionLocationId) {
+					locationId = subdivisionLocationId;
+					countryCode = props?.ADM0_A3?.getValue();
+					locationType = 'level1';
+					displayName = props?.NAME?.getValue() ?? locationId;
 				} else {
-					addCountryVisit(currentUserId, iso, displayName);
+					const iso = props?.ISO_A3?.getValue();
+					if (!iso) return;
+					locationId = iso;
+					countryCode = iso;
+					locationType = 'country';
+					displayName = props?.NAME?.getValue() ?? iso;
+				}
+				if (!countryCode) return;
+
+				if (visitedIdsRef.current.has(locationId)) {
+					removeVisit(currentUserId, locationId);
+				} else {
+					addVisit(currentUserId, { locationId, locationType, countryCode, displayName });
 				}
 			}, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 		});
 
 		return () => {
 			cancelled = true;
+			viewer.camera.moveEnd.removeEventListener(handleZoomChange);
 			handler?.destroy();
 			viewer.destroy();
-			dataSourceRef.current = null;
+			countriesDataSourceRef.current = null;
+			admin1CacheRef.current.clear();
+			activeDrillCountryRef.current = null;
 		};
 	}, []);
 

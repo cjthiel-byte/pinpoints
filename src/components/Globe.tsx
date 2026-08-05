@@ -32,6 +32,7 @@ function preparePolygonEntities(dataSource: Cesium.GeoJsonDataSource) {
 
 export default function Globe() {
 	const containerRef = useRef<HTMLDivElement>(null);
+	const viewerRef = useRef<Cesium.Viewer | null>(null);
 	const countriesDataSourceRef = useRef<Cesium.GeoJsonDataSource | null>(null);
 	const admin1CacheRef = useRef<Map<string, Cesium.GeoJsonDataSource>>(new Map());
 	const activeDrillCountryRef = useRef<string | null>(null);
@@ -98,6 +99,12 @@ export default function Globe() {
 			selectionIndicator: false,
 			infoBox: false,
 		});
+
+		viewerRef.current = viewer;
+		// Tilting into a near-horizon view is disorienting for a click-to-toggle map and
+		// easy to trigger accidentally (a slightly-dragged click both tilts the camera and
+		// gets swallowed as a drag instead of registering as a click). Rotate/pan/zoom stay on.
+		viewer.scene.screenSpaceCameraController.enableTilt = false;
 
 		let handler: Cesium.ScreenSpaceEventHandler | undefined;
 		let cancelled = false;
@@ -244,11 +251,22 @@ export default function Globe() {
 			viewer.camera.moveEnd.removeEventListener(handleZoomChange);
 			handler?.destroy();
 			viewer.destroy();
+			viewerRef.current = null;
 			countriesDataSourceRef.current = null;
 			admin1CacheRef.current.clear();
 			activeDrillCountryRef.current = null;
 		};
 	}, []);
 
-	return <div ref={containerRef} className="h-full w-full" />;
+	return (
+		<div className="relative h-full w-full">
+			<div ref={containerRef} className="h-full w-full" />
+			<button
+				onClick={() => viewerRef.current?.camera.flyHome(1.5)}
+				className="absolute bottom-4 right-4 rounded-md bg-slate-950/80 px-3 py-2 text-sm font-medium text-slate-200 backdrop-blur hover:bg-slate-900"
+			>
+				Reset view
+			</button>
+		</div>
+	);
 }

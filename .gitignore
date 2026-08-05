@@ -2,6 +2,10 @@
 dist/
 # generated types
 .astro/
+# wrangler build cache
+.wrangler/
+# wrangler generated runtime types
+worker-configuration.d.ts
 
 # dependencies
 node_modules/

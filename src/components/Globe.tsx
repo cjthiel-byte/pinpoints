@@ -4,6 +4,7 @@ import 'cesium/Build/Cesium/Widgets/widgets.css';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from '../lib/firebase';
 import { addVisit, removeVisit, subscribeToUserVisits } from '../lib/visits';
+import { getSubdivisionTerm } from '../lib/terminology';
 
 declare global {
 	interface Window {
@@ -41,6 +42,7 @@ export default function Globe() {
 
 	const [userId, setUserId] = useState<string | null>(null);
 	const [showSignInHint, setShowSignInHint] = useState(false);
+	const [drillCountry, setDrillCountry] = useState<{ code: string; name: string } | null>(null);
 
 	useEffect(() => {
 		return onAuthStateChanged(auth, (user) => setUserId(user?.uid ?? null));
@@ -130,6 +132,18 @@ export default function Globe() {
 			}
 		}
 
+		function getCountryDisplayName(countryCode: string): string {
+			const countriesDS = countriesDataSourceRef.current;
+			if (countriesDS) {
+				for (const entity of countriesDS.entities.values) {
+					if (entity.properties?.ISO_A3?.getValue() === countryCode) {
+						return entity.properties?.NAME?.getValue() ?? countryCode;
+					}
+				}
+			}
+			return countryCode;
+		}
+
 		async function drillIntoCountry(countryCode: string) {
 			const previous = activeDrillCountryRef.current;
 			if (previous === countryCode) return;
@@ -139,6 +153,7 @@ export default function Globe() {
 				if (previousDS) previousDS.show = false;
 				setCountryEntityVisible(previous, true);
 			}
+			setDrillCountry(null);
 
 			activeDrillCountryRef.current = countryCode;
 			setCountryEntityVisible(countryCode, false);
@@ -167,6 +182,7 @@ export default function Globe() {
 
 			dataSource.show = true;
 			applyVisitedColors();
+			setDrillCountry({ code: countryCode, name: getCountryDisplayName(countryCode) });
 		}
 
 		function exitDrillMode() {
@@ -176,6 +192,7 @@ export default function Globe() {
 			if (activeDS) activeDS.show = false;
 			setCountryEntityVisible(active, true);
 			activeDrillCountryRef.current = null;
+			setDrillCountry(null);
 		}
 
 		function handleZoomChange() {
@@ -284,6 +301,11 @@ export default function Globe() {
 			{showSignInHint && (
 				<div className="pointer-events-none absolute bottom-6 left-1/2 -translate-x-1/2 rounded-md bg-slate-950/90 px-4 py-2 text-sm text-slate-200 backdrop-blur">
 					Sign in to start tracking your visits
+				</div>
+			)}
+			{drillCountry && (
+				<div className="pointer-events-none absolute left-6 top-16 rounded-md bg-slate-950/80 px-3 py-1.5 text-sm text-slate-200 backdrop-blur">
+					{drillCountry.name} — {getSubdivisionTerm(drillCountry.code, 'level1').plural}
 				</div>
 			)}
 		</div>

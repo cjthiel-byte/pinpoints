@@ -1,5 +1,5 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
+import { browserLocalPersistence, getAuth, setPersistence } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 
 const firebaseConfig = {
@@ -14,3 +14,10 @@ const firebaseConfig = {
 export const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
+
+// Firebase Auth defaults to IndexedDB-backed persistence, which browsers with
+// strict storage/tracking protection (Opera, Brave, Safari) can break in ways
+// that surface as raw browser errors ("Database is closing") instead of
+// Firebase-specific ones. localStorage-backed persistence is more broadly
+// compatible and sufficient for this app's needs.
+void setPersistence(auth, browserLocalPersistence);

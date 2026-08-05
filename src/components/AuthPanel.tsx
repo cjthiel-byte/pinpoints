@@ -2,9 +2,10 @@ import { useEffect, useState } from 'react';
 import {
 	GoogleAuthProvider,
 	createUserWithEmailAndPassword,
+	getRedirectResult,
 	onAuthStateChanged,
 	signInWithEmailAndPassword,
-	signInWithPopup,
+	signInWithRedirect,
 	signOut,
 	type User,
 } from 'firebase/auth';
@@ -25,10 +26,14 @@ export default function AuthPanel() {
 		});
 	}, []);
 
+	useEffect(() => {
+		getRedirectResult(auth).catch((err) => setError((err as Error).message));
+	}, []);
+
 	async function handleGoogleSignIn() {
 		setError(null);
 		try {
-			await signInWithPopup(auth, new GoogleAuthProvider());
+			await signInWithRedirect(auth, new GoogleAuthProvider());
 		} catch (err) {
 			setError((err as Error).message);
 		}

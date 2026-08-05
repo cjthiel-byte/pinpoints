@@ -21,6 +21,9 @@ const VISITED_COLOR = Cesium.Color.fromCssColorString('#3b82f6').withAlpha(0.75)
 // Below this camera height, clicking targets a country's first-level
 // subdivisions instead of the country itself.
 const ADMIN1_ZOOM_HEIGHT = 2_500_000;
+// Below this camera height, clicking within the US targets counties instead
+// of the state. US-only, per the brief's MVP scope for level2 data.
+const COUNTY_ZOOM_HEIGHT = 400_000;
 
 function preparePolygonEntities(dataSource: Cesium.GeoJsonDataSource) {
 	for (const entity of dataSource.entities.values) {
@@ -36,13 +39,16 @@ export default function Globe() {
 	const viewerRef = useRef<Cesium.Viewer | null>(null);
 	const countriesDataSourceRef = useRef<Cesium.GeoJsonDataSource | null>(null);
 	const admin1CacheRef = useRef<Map<string, Cesium.GeoJsonDataSource>>(new Map());
+	const countyCacheRef = useRef<Map<string, Cesium.GeoJsonDataSource>>(new Map());
 	const activeDrillCountryRef = useRef<string | null>(null);
+	const activeDrillStateRef = useRef<string | null>(null);
 	const visitedIdsRef = useRef<Set<string>>(new Set());
 	const userIdRef = useRef<string | null>(null);
 
 	const [userId, setUserId] = useState<string | null>(null);
 	const [showSignInHint, setShowSignInHint] = useState(false);
 	const [drillCountry, setDrillCountry] = useState<{ code: string; name: string } | null>(null);
+	const [drillState, setDrillState] = useState<{ code: string; name: string } | null>(null);
 
 	useEffect(() => {
 		return onAuthStateChanged(auth, (user) => setUserId(user?.uid ?? null));
@@ -69,6 +75,14 @@ export default function Globe() {
 			}
 		}
 		for (const dataSource of admin1CacheRef.current.values()) {
+			for (const entity of dataSource.entities.values) {
+				if (!entity.polygon) continue;
+				const locationId = entity.properties?.LOCATION_ID?.getValue();
+				const isVisited = !!locationId && visitedIdsRef.current.has(locationId);
+				entity.polygon.material = new Cesium.ColorMaterialProperty(isVisited ? VISITED_COLOR : FILL_COLOR);
+			}
+		}
+		for (const dataSource of countyCacheRef.current.values()) {
 			for (const entity of dataSource.entities.values) {
 				if (!entity.polygon) continue;
 				const locationId = entity.properties?.LOCATION_ID?.getValue();
@@ -144,9 +158,83 @@ export default function Globe() {
 			return countryCode;
 		}
 
+		function setStateEntityVisible(stateCode: string, visible: boolean) {
+			const usaAdmin1DS = admin1CacheRef.current.get('USA');
+			if (!usaAdmin1DS) return;
+			for (const entity of usaAdmin1DS.entities.values) {
+				if (entity.properties?.LOCATION_ID?.getValue() === `USA-${stateCode}`) {
+					entity.show = visible;
+				}
+			}
+		}
+
+		function getStateDisplayName(stateCode: string): string {
+			const usaAdmin1DS = admin1CacheRef.current.get('USA');
+			if (usaAdmin1DS) {
+				for (const entity of usaAdmin1DS.entities.values) {
+					if (entity.properties?.LOCATION_ID?.getValue() === `USA-${stateCode}`) {
+						return entity.properties?.NAME?.getValue() ?? stateCode;
+					}
+				}
+			}
+			return stateCode;
+		}
+
+		function exitCountyMode() {
+			const active = activeDrillStateRef.current;
+			if (!active) return;
+			const activeDS = countyCacheRef.current.get(active);
+			if (activeDS) activeDS.show = false;
+			setStateEntityVisible(active, true);
+			activeDrillStateRef.current = null;
+			setDrillState(null);
+		}
+
+		async function drillIntoState(stateCode: string) {
+			const previous = activeDrillStateRef.current;
+			if (previous === stateCode) return;
+
+			if (previous) {
+				const previousDS = countyCacheRef.current.get(previous);
+				if (previousDS) previousDS.show = false;
+				setStateEntityVisible(previous, true);
+			}
+			setDrillState(null);
+
+			activeDrillStateRef.current = stateCode;
+			setStateEntityVisible(stateCode, false);
+
+			let dataSource = countyCacheRef.current.get(stateCode);
+			if (!dataSource) {
+				try {
+					dataSource = preparePolygonEntities(
+						await Cesium.GeoJsonDataSource.load(`/geo/counties/${stateCode}.geojson`, {
+							stroke: STROKE_COLOR,
+							fill: FILL_COLOR,
+							strokeWidth: 1,
+							clampToGround: false,
+						}),
+					);
+				} catch {
+					setStateEntityVisible(stateCode, true);
+					activeDrillStateRef.current = null;
+					return;
+				}
+				if (cancelled) return;
+				countyCacheRef.current.set(stateCode, dataSource);
+				viewer.dataSources.add(dataSource);
+			}
+
+			dataSource.show = true;
+			applyVisitedColors();
+			setDrillState({ code: stateCode, name: getStateDisplayName(stateCode) });
+		}
+
 		async function drillIntoCountry(countryCode: string) {
 			const previous = activeDrillCountryRef.current;
 			if (previous === countryCode) return;
+
+			exitCountyMode();
 
 			if (previous) {
 				const previousDS = admin1CacheRef.current.get(previous);
@@ -186,6 +274,7 @@ export default function Globe() {
 		}
 
 		function exitDrillMode() {
+			exitCountyMode();
 			const active = activeDrillCountryRef.current;
 			if (!active) return;
 			const activeDS = admin1CacheRef.current.get(active);
@@ -193,6 +282,13 @@ export default function Globe() {
 			setCountryEntityVisible(active, true);
 			activeDrillCountryRef.current = null;
 			setDrillCountry(null);
+		}
+
+		function pickEntityAtCenter(): Cesium.Entity | undefined {
+			const canvas = viewer.scene.canvas;
+			const center = new Cesium.Cartesian2(canvas.clientWidth / 2, canvas.clientHeight / 2);
+			const picked = viewer.scene.pick(center);
+			return Cesium.defined(picked) && picked.id instanceof Cesium.Entity ? picked.id : undefined;
 		}
 
 		function handleZoomChange() {
@@ -203,14 +299,35 @@ export default function Globe() {
 				return;
 			}
 
-			const canvas = viewer.scene.canvas;
-			const center = new Cesium.Cartesian2(canvas.clientWidth / 2, canvas.clientHeight / 2);
-			const picked = viewer.scene.pick(center);
-			if (!Cesium.defined(picked) || !(picked.id instanceof Cesium.Entity)) return;
+			const centerEntity = pickEntityAtCenter();
+			const props = centerEntity?.properties;
+			const locationType = props?.LOCATION_TYPE?.getValue();
 
-			const countryCode = picked.id.properties?.ISO_A3?.getValue() ?? picked.id.properties?.ADM0_A3?.getValue();
+			const countryCode =
+				locationType === 'level2'
+					? 'USA'
+					: locationType === 'level1'
+						? props?.ADM0_A3?.getValue()
+						: props?.ISO_A3?.getValue();
+
 			if (countryCode && countryCode !== activeDrillCountryRef.current) {
 				drillIntoCountry(countryCode);
+			}
+
+			if (height >= COUNTY_ZOOM_HEIGHT || activeDrillCountryRef.current !== 'USA') {
+				exitCountyMode();
+				return;
+			}
+
+			const stateCode =
+				locationType === 'level1'
+					? props?.LOCATION_ID?.getValue()?.split('-')[1]
+					: locationType === 'level2'
+						? props?.STATE?.getValue()
+						: undefined;
+
+			if (stateCode && stateCode !== activeDrillStateRef.current) {
+				drillIntoState(stateCode);
 			}
 		}
 
@@ -247,32 +364,37 @@ export default function Globe() {
 				if (!entity.polygon) return;
 
 				const props = entity.properties;
-				const subdivisionLocationId = props?.LOCATION_ID?.getValue();
+				const locationType = props?.LOCATION_TYPE?.getValue();
 
 				let locationId: string;
-				let locationType: 'country' | 'level1';
+				let visitLocationType: 'country' | 'level1' | 'level2';
 				let countryCode: string;
 				let displayName: string;
 
-				if (subdivisionLocationId) {
-					locationId = subdivisionLocationId;
+				if (locationType === 'level2') {
+					locationId = props?.LOCATION_ID?.getValue();
+					countryCode = 'USA';
+					visitLocationType = 'level2';
+					displayName = props?.NAME?.getValue() ?? locationId;
+				} else if (locationType === 'level1') {
+					locationId = props?.LOCATION_ID?.getValue();
 					countryCode = props?.ADM0_A3?.getValue();
-					locationType = 'level1';
+					visitLocationType = 'level1';
 					displayName = props?.NAME?.getValue() ?? locationId;
 				} else {
 					const iso = props?.ISO_A3?.getValue();
 					if (!iso) return;
 					locationId = iso;
 					countryCode = iso;
-					locationType = 'country';
+					visitLocationType = 'country';
 					displayName = props?.NAME?.getValue() ?? iso;
 				}
-				if (!countryCode) return;
+				if (!locationId || !countryCode) return;
 
 				if (visitedIdsRef.current.has(locationId)) {
 					removeVisit(currentUserId, locationId);
 				} else {
-					addVisit(currentUserId, { locationId, locationType, countryCode, displayName });
+					addVisit(currentUserId, { locationId, locationType: visitLocationType, countryCode, displayName });
 				}
 			}, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 		});
@@ -285,7 +407,9 @@ export default function Globe() {
 			viewerRef.current = null;
 			countriesDataSourceRef.current = null;
 			admin1CacheRef.current.clear();
+			countyCacheRef.current.clear();
 			activeDrillCountryRef.current = null;
+			activeDrillStateRef.current = null;
 		};
 	}, []);
 
@@ -303,10 +427,16 @@ export default function Globe() {
 					Sign in to start tracking your visits
 				</div>
 			)}
-			{drillCountry && (
+			{drillState ? (
 				<div className="pointer-events-none absolute left-6 top-16 rounded-md bg-slate-950/80 px-3 py-1.5 text-sm text-slate-200 backdrop-blur">
-					{drillCountry.name} — {getSubdivisionTerm(drillCountry.code, 'level1').plural}
+					{drillState.name} — {getSubdivisionTerm('USA', 'level2').plural}
 				</div>
+			) : (
+				drillCountry && (
+					<div className="pointer-events-none absolute left-6 top-16 rounded-md bg-slate-950/80 px-3 py-1.5 text-sm text-slate-200 backdrop-blur">
+						{drillCountry.name} — {getSubdivisionTerm(drillCountry.code, 'level1').plural}
+					</div>
+				)
 			)}
 		</div>
 	);

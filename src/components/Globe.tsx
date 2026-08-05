@@ -40,10 +40,17 @@ export default function Globe() {
 	const userIdRef = useRef<string | null>(null);
 
 	const [userId, setUserId] = useState<string | null>(null);
+	const [showSignInHint, setShowSignInHint] = useState(false);
 
 	useEffect(() => {
 		return onAuthStateChanged(auth, (user) => setUserId(user?.uid ?? null));
 	}, []);
+
+	useEffect(() => {
+		if (!showSignInHint) return;
+		const timeout = setTimeout(() => setShowSignInHint(false), 2500);
+		return () => clearTimeout(timeout);
+	}, [showSignInHint]);
 
 	useEffect(() => {
 		userIdRef.current = userId;
@@ -207,7 +214,10 @@ export default function Globe() {
 			handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
 			handler.setInputAction((movement: Cesium.ScreenSpaceEventHandler.PositionedEvent) => {
 				const currentUserId = userIdRef.current;
-				if (!currentUserId) return;
+				if (!currentUserId) {
+					setShowSignInHint(true);
+					return;
+				}
 
 				const picked = viewer.scene.pick(movement.position);
 				if (!Cesium.defined(picked) || !(picked.id instanceof Cesium.Entity)) return;
@@ -267,6 +277,11 @@ export default function Globe() {
 			>
 				Reset view
 			</button>
+			{showSignInHint && (
+				<div className="pointer-events-none absolute bottom-6 left-1/2 -translate-x-1/2 rounded-md bg-slate-950/90 px-4 py-2 text-sm text-slate-200 backdrop-blur">
+					Sign in to start tracking your visits
+				</div>
+			)}
 		</div>
 	);
 }

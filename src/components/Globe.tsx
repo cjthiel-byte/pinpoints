@@ -1,6 +1,9 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import * as Cesium from 'cesium';
 import 'cesium/Build/Cesium/Widgets/widgets.css';
+import { onAuthStateChanged } from 'firebase/auth';
+import { auth } from '../lib/firebase';
+import { addCountryVisit, removeCountryVisit, subscribeToUserVisits } from '../lib/visits';
 
 declare global {
 	interface Window {
@@ -16,6 +19,43 @@ const VISITED_COLOR = Cesium.Color.fromCssColorString('#3b82f6').withAlpha(0.75)
 
 export default function Globe() {
 	const containerRef = useRef<HTMLDivElement>(null);
+	const dataSourceRef = useRef<Cesium.GeoJsonDataSource | null>(null);
+	const visitedIdsRef = useRef<Set<string>>(new Set());
+	const userIdRef = useRef<string | null>(null);
+
+	const [userId, setUserId] = useState<string | null>(null);
+
+	useEffect(() => {
+		return onAuthStateChanged(auth, (user) => setUserId(user?.uid ?? null));
+	}, []);
+
+	useEffect(() => {
+		userIdRef.current = userId;
+	}, [userId]);
+
+	function applyVisitedColors() {
+		const dataSource = dataSourceRef.current;
+		if (!dataSource) return;
+		for (const entity of dataSource.entities.values) {
+			if (!entity.polygon) continue;
+			const iso = entity.properties?.ISO_A3?.getValue();
+			const isVisited = !!iso && visitedIdsRef.current.has(iso);
+			entity.polygon.material = new Cesium.ColorMaterialProperty(isVisited ? VISITED_COLOR : FILL_COLOR);
+		}
+	}
+
+	useEffect(() => {
+		if (!userId) {
+			visitedIdsRef.current = new Set();
+			applyVisitedColors();
+			return;
+		}
+
+		return subscribeToUserVisits(userId, (locationIds) => {
+			visitedIdsRef.current = locationIds;
+			applyVisitedColors();
+		});
+	}, [userId]);
 
 	useEffect(() => {
 		if (!containerRef.current) return;
@@ -35,7 +75,6 @@ export default function Globe() {
 			infoBox: false,
 		});
 
-		const visited = new Set<string>();
 		let handler: Cesium.ScreenSpaceEventHandler | undefined;
 		let cancelled = false;
 
@@ -52,9 +91,14 @@ export default function Globe() {
 			}
 			if (cancelled) return;
 			viewer.dataSources.add(dataSource);
+			dataSourceRef.current = dataSource;
+			applyVisitedColors();
 
 			handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
 			handler.setInputAction((movement: Cesium.ScreenSpaceEventHandler.PositionedEvent) => {
+				const currentUserId = userIdRef.current;
+				if (!currentUserId) return;
+
 				const picked = viewer.scene.pick(movement.position);
 				if (!Cesium.defined(picked) || !(picked.id instanceof Cesium.Entity)) return;
 
@@ -62,12 +106,12 @@ export default function Globe() {
 				const iso = entity.properties?.ISO_A3?.getValue();
 				if (!iso || !entity.polygon) return;
 
-				if (visited.has(iso)) {
-					visited.delete(iso);
-					entity.polygon.material = new Cesium.ColorMaterialProperty(FILL_COLOR);
+				const displayName = entity.properties?.NAME?.getValue() ?? iso;
+
+				if (visitedIdsRef.current.has(iso)) {
+					removeCountryVisit(currentUserId, iso);
 				} else {
-					visited.add(iso);
-					entity.polygon.material = new Cesium.ColorMaterialProperty(VISITED_COLOR);
+					addCountryVisit(currentUserId, iso, displayName);
 				}
 			}, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 		});
@@ -76,6 +120,7 @@ export default function Globe() {
 			cancelled = true;
 			handler?.destroy();
 			viewer.destroy();
+			dataSourceRef.current = null;
 		};
 	}, []);
 

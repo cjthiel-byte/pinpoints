@@ -1,9 +1,11 @@
 ---
 import Layout from '../layouts/Layout.astro';
+import AuthPanel from '../components/AuthPanel';
 ---
 
 <Layout title="Pinpoints">
-	<main class="flex min-h-screen items-center justify-center">
+	<main class="flex min-h-screen flex-col items-center justify-center gap-8">
 		<h1 class="text-3xl font-semibold">Pinpoints</h1>
+		<AuthPanel client:load />
 	</main>
 </Layout>

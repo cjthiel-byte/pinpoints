@@ -112,6 +112,10 @@ export default function Globe() {
 		// easy to trigger accidentally (a slightly-dragged click both tilts the camera and
 		// gets swallowed as a drag instead of registering as a click). Rotate/pan/zoom stay on.
 		viewer.scene.screenSpaceCameraController.enableTilt = false;
+		// The Viewer widget registers its own default double-click handler that tracks
+		// (flies to and follows) whatever entity was double-clicked — not something this
+		// click-to-toggle map wants, and it reads as the camera randomly reorienting itself.
+		viewer.screenSpaceEventHandler.removeInputAction(Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
 
 		let handler: Cesium.ScreenSpaceEventHandler | undefined;
 		let cancelled = false;

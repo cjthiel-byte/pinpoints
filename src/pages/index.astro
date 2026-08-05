@@ -1,11 +1,17 @@
 ---
 import Layout from '../layouts/Layout.astro';
 import AuthPanel from '../components/AuthPanel';
+import Globe from '../components/Globe';
 ---
 
 <Layout title="Pinpoints">
-	<main class="flex min-h-screen flex-col items-center justify-center gap-8">
-		<h1 class="text-3xl font-semibold">Pinpoints</h1>
-		<AuthPanel client:load />
+	<main class="relative h-screen w-screen overflow-hidden">
+		<Globe client:only="react" />
+		<div class="pointer-events-none absolute inset-0 flex flex-col items-start justify-start p-6">
+			<h1 class="pointer-events-none text-2xl font-semibold drop-shadow">Pinpoints</h1>
+			<div class="pointer-events-auto absolute right-6 top-6 rounded-lg bg-slate-950/80 p-4 backdrop-blur">
+				<AuthPanel client:load />
+			</div>
+		</div>
 	</main>
 </Layout>

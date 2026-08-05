@@ -19,6 +19,7 @@
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "astro": "^7.1.6",
+    "cesium": "^1.144.0",
     "firebase": "^12.17.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",

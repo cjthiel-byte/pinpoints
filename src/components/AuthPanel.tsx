@@ -9,10 +9,14 @@ import {
 	type User,
 } from 'firebase/auth';
 import { auth } from '../lib/firebase';
+import { COLOR_PALETTE } from '../lib/colors';
+import { createUserProfile, subscribeToUserProfile, type UserProfile } from '../lib/users';
 
 export default function AuthPanel() {
 	const [user, setUser] = useState<User | null>(null);
 	const [loading, setLoading] = useState(true);
+	const [profile, setProfile] = useState<UserProfile | null>(null);
+	const [profileLoading, setProfileLoading] = useState(true);
 	const [email, setEmail] = useState('');
 	const [password, setPassword] = useState('');
 	const [mode, setMode] = useState<'sign-in' | 'sign-up'>('sign-in');
@@ -24,6 +28,19 @@ export default function AuthPanel() {
 			setLoading(false);
 		});
 	}, []);
+
+	useEffect(() => {
+		if (!user) {
+			setProfile(null);
+			setProfileLoading(false);
+			return;
+		}
+		setProfileLoading(true);
+		return subscribeToUserProfile(user.uid, (nextProfile) => {
+			setProfile(nextProfile);
+			setProfileLoading(false);
+		});
+	}, [user]);
 
 	async function handleGoogleSignIn() {
 		setError(null);
@@ -48,15 +65,52 @@ export default function AuthPanel() {
 		}
 	}
 
-	if (loading) {
+	async function handlePickColor(color: string) {
+		if (!user) return;
+		setError(null);
+		try {
+			await createUserProfile(user.uid, {
+				email: user.email ?? '',
+				displayName: user.displayName ?? user.email?.split('@')[0] ?? 'Traveler',
+				color,
+			});
+		} catch (err) {
+			setError((err as Error).message);
+		}
+	}
+
+	if (loading || profileLoading) {
 		return <div className="text-sm text-slate-400">Loading…</div>;
 	}
 
-	if (user) {
+	if (user && !profile) {
+		return (
+			<div className="flex w-full max-w-xs flex-col gap-3">
+				<p className="text-sm text-slate-300">Pick a color for your pins</p>
+				<div className="grid grid-cols-4 gap-2">
+					{COLOR_PALETTE.map((c) => (
+						<button
+							key={c.hex}
+							type="button"
+							onClick={() => handlePickColor(c.hex)}
+							title={c.name}
+							aria-label={c.name}
+							style={{ backgroundColor: c.hex }}
+							className="h-10 w-10 rounded-full border-2 border-transparent transition hover:border-white"
+						/>
+					))}
+				</div>
+				{error && <p className="text-xs text-red-400">{error}</p>}
+			</div>
+		);
+	}
+
+	if (user && profile) {
 		return (
 			<div className="flex flex-col items-center gap-3">
-				<p className="text-sm text-slate-300">
-					Signed in as <span className="font-medium text-white">{user.email}</span>
+				<p className="flex items-center gap-2 text-sm text-slate-300">
+					<span className="h-3 w-3 rounded-full" style={{ backgroundColor: profile.color }} />
+					Signed in as <span className="font-medium text-white">{profile.displayName}</span>
 				</p>
 				<button
 					onClick={() => signOut(auth)}

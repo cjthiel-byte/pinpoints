@@ -3,8 +3,10 @@ import * as Cesium from 'cesium';
 import 'cesium/Build/Cesium/Widgets/widgets.css';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from '../lib/firebase';
-import { addVisit, removeVisit, subscribeToUserVisits } from '../lib/visits';
+import { addVisit, removeVisit, subscribeToAllVisits } from '../lib/visits';
 import { getSubdivisionTerm } from '../lib/terminology';
+import { DEFAULT_COLOR, blendColors } from '../lib/colors';
+import { subscribeToAllUsers, type UserProfile } from '../lib/users';
 
 declare global {
 	interface Window {
@@ -16,7 +18,6 @@ window.CESIUM_BASE_URL = '/cesium/';
 
 const FILL_COLOR = Cesium.Color.fromCssColorString('#1e293b').withAlpha(0.45);
 const STROKE_COLOR = Cesium.Color.fromCssColorString('#64748b');
-const VISITED_COLOR = Cesium.Color.fromCssColorString('#3b82f6').withAlpha(0.75);
 
 // Below this camera height, clicking targets a country's first-level
 // subdivisions instead of the country itself.
@@ -24,6 +25,8 @@ const ADMIN1_ZOOM_HEIGHT = 2_500_000;
 // Below this camera height, clicking within the US targets counties instead
 // of the state. US-only, per the brief's MVP scope for level2 data.
 const COUNTY_ZOOM_HEIGHT = 400_000;
+
+type ViewMode = { type: 'mine' } | { type: 'all' } | { type: 'individual'; userId: string };
 
 function preparePolygonEntities(dataSource: Cesium.GeoJsonDataSource) {
 	for (const entity of dataSource.entities.values) {
@@ -42,11 +45,15 @@ export default function Globe() {
 	const countyCacheRef = useRef<Map<string, Cesium.GeoJsonDataSource>>(new Map());
 	const activeDrillCountryRef = useRef<string | null>(null);
 	const activeDrillStateRef = useRef<string | null>(null);
-	const visitedIdsRef = useRef<Set<string>>(new Set());
+	const allVisitsRef = useRef<Map<string, Set<string>>>(new Map());
+	const usersRef = useRef<Map<string, UserProfile>>(new Map());
 	const userIdRef = useRef<string | null>(null);
+	const viewModeRef = useRef<ViewMode>({ type: 'mine' });
 
 	const [userId, setUserId] = useState<string | null>(null);
-	const [showSignInHint, setShowSignInHint] = useState(false);
+	const [users, setUsers] = useState<Map<string, UserProfile>>(new Map());
+	const [viewMode, setViewMode] = useState<ViewMode>({ type: 'mine' });
+	const [toastMessage, setToastMessage] = useState<string | null>(null);
 	const [drillCountry, setDrillCountry] = useState<{ code: string; name: string } | null>(null);
 	const [drillState, setDrillState] = useState<{ code: string; name: string } | null>(null);
 
@@ -55,14 +62,47 @@ export default function Globe() {
 	}, []);
 
 	useEffect(() => {
-		if (!showSignInHint) return;
-		const timeout = setTimeout(() => setShowSignInHint(false), 2500);
+		if (!toastMessage) return;
+		const timeout = setTimeout(() => setToastMessage(null), 2500);
 		return () => clearTimeout(timeout);
-	}, [showSignInHint]);
+	}, [toastMessage]);
 
 	useEffect(() => {
 		userIdRef.current = userId;
 	}, [userId]);
+
+	useEffect(() => {
+		viewModeRef.current = viewMode;
+		applyVisitedColors();
+	}, [viewMode]);
+
+	function colorForLocation(locationId: string): Cesium.Color {
+		const mode = viewModeRef.current;
+		const visitors = allVisitsRef.current.get(locationId);
+
+		if (mode.type === 'mine') {
+			const uid = userIdRef.current;
+			if (!uid || !visitors?.has(uid)) return FILL_COLOR;
+			const hex = usersRef.current.get(uid)?.color ?? DEFAULT_COLOR;
+			return Cesium.Color.fromCssColorString(hex).withAlpha(0.75);
+		}
+
+		if (mode.type === 'individual') {
+			if (!visitors?.has(mode.userId)) return FILL_COLOR;
+			const hex = usersRef.current.get(mode.userId)?.color ?? DEFAULT_COLOR;
+			return Cesium.Color.fromCssColorString(hex).withAlpha(0.75);
+		}
+
+		// 'all'
+		if (!visitors || visitors.size === 0) return FILL_COLOR;
+		const hexColors: string[] = [];
+		for (const uid of visitors) {
+			const hex = usersRef.current.get(uid)?.color;
+			if (hex) hexColors.push(hex);
+		}
+		if (hexColors.length === 0) return FILL_COLOR;
+		return Cesium.Color.fromCssColorString(blendColors(hexColors)).withAlpha(0.75);
+	}
 
 	function applyVisitedColors() {
 		const countriesDS = countriesDataSourceRef.current;
@@ -70,39 +110,51 @@ export default function Globe() {
 			for (const entity of countriesDS.entities.values) {
 				if (!entity.polygon) continue;
 				const iso = entity.properties?.ISO_A3?.getValue();
-				const isVisited = !!iso && visitedIdsRef.current.has(iso);
-				entity.polygon.material = new Cesium.ColorMaterialProperty(isVisited ? VISITED_COLOR : FILL_COLOR);
+				if (!iso) continue;
+				entity.polygon.material = new Cesium.ColorMaterialProperty(colorForLocation(iso));
 			}
 		}
 		for (const dataSource of admin1CacheRef.current.values()) {
 			for (const entity of dataSource.entities.values) {
 				if (!entity.polygon) continue;
 				const locationId = entity.properties?.LOCATION_ID?.getValue();
-				const isVisited = !!locationId && visitedIdsRef.current.has(locationId);
-				entity.polygon.material = new Cesium.ColorMaterialProperty(isVisited ? VISITED_COLOR : FILL_COLOR);
+				if (!locationId) continue;
+				entity.polygon.material = new Cesium.ColorMaterialProperty(colorForLocation(locationId));
 			}
 		}
 		for (const dataSource of countyCacheRef.current.values()) {
 			for (const entity of dataSource.entities.values) {
 				if (!entity.polygon) continue;
 				const locationId = entity.properties?.LOCATION_ID?.getValue();
-				const isVisited = !!locationId && visitedIdsRef.current.has(locationId);
-				entity.polygon.material = new Cesium.ColorMaterialProperty(isVisited ? VISITED_COLOR : FILL_COLOR);
+				if (!locationId) continue;
+				entity.polygon.material = new Cesium.ColorMaterialProperty(colorForLocation(locationId));
 			}
 		}
 	}
 
 	useEffect(() => {
 		if (!userId) {
-			visitedIdsRef.current = new Set();
+			allVisitsRef.current = new Map();
+			usersRef.current = new Map();
+			setUsers(new Map());
 			applyVisitedColors();
 			return;
 		}
 
-		return subscribeToUserVisits(userId, (locationIds) => {
-			visitedIdsRef.current = locationIds;
+		const unsubVisits = subscribeToAllVisits((map) => {
+			allVisitsRef.current = map;
 			applyVisitedColors();
 		});
+		const unsubUsers = subscribeToAllUsers((map) => {
+			usersRef.current = map;
+			setUsers(map);
+			applyVisitedColors();
+		});
+
+		return () => {
+			unsubVisits();
+			unsubUsers();
+		};
 	}, [userId]);
 
 	useEffect(() => {
@@ -353,7 +405,11 @@ export default function Globe() {
 			handler.setInputAction((movement: Cesium.ScreenSpaceEventHandler.PositionedEvent) => {
 				const currentUserId = userIdRef.current;
 				if (!currentUserId) {
-					setShowSignInHint(true);
+					setToastMessage('Sign in to start tracking your visits');
+					return;
+				}
+				if (viewModeRef.current.type !== 'mine') {
+					setToastMessage('Switch to "My visits" to edit');
 					return;
 				}
 
@@ -391,7 +447,8 @@ export default function Globe() {
 				}
 				if (!locationId || !countryCode) return;
 
-				if (visitedIdsRef.current.has(locationId)) {
+				const alreadyVisited = allVisitsRef.current.get(locationId)?.has(currentUserId) ?? false;
+				if (alreadyVisited) {
 					removeVisit(currentUserId, locationId);
 				} else {
 					addVisit(currentUserId, { locationId, locationType: visitLocationType, countryCode, displayName });
@@ -422,9 +479,9 @@ export default function Globe() {
 			>
 				Reset view
 			</button>
-			{showSignInHint && (
+			{toastMessage && (
 				<div className="pointer-events-none absolute bottom-6 left-1/2 -translate-x-1/2 rounded-md bg-slate-950/90 px-4 py-2 text-sm text-slate-200 backdrop-blur">
-					Sign in to start tracking your visits
+					{toastMessage}
 				</div>
 			)}
 			{drillState ? (
@@ -437,6 +494,44 @@ export default function Globe() {
 						{drillCountry.name} — {getSubdivisionTerm(drillCountry.code, 'level1').plural}
 					</div>
 				)
+			)}
+			{userId && users.has(userId) && (
+				<div className="absolute right-6 top-40 flex flex-col gap-1.5 rounded-md bg-slate-950/80 p-3 text-sm backdrop-blur">
+					<button
+						onClick={() => setViewMode({ type: 'mine' })}
+						className={`rounded px-2 py-1 text-left ${
+							viewMode.type === 'mine' ? 'bg-slate-700 text-white' : 'text-slate-300 hover:bg-slate-800'
+						}`}
+					>
+						My visits
+					</button>
+					<button
+						onClick={() => setViewMode({ type: 'all' })}
+						className={`rounded px-2 py-1 text-left ${
+							viewMode.type === 'all' ? 'bg-slate-700 text-white' : 'text-slate-300 hover:bg-slate-800'
+						}`}
+					>
+						All users
+					</button>
+					<select
+						value={viewMode.type === 'individual' ? viewMode.userId : ''}
+						onChange={(e) => {
+							if (e.target.value) setViewMode({ type: 'individual', userId: e.target.value });
+						}}
+						className={`rounded border border-slate-700 bg-slate-900 px-2 py-1 ${
+							viewMode.type === 'individual' ? 'text-white' : 'text-slate-300'
+						}`}
+					>
+						<option value="" disabled>
+							Individual…
+						</option>
+						{[...users.entries()].map(([uid, p]) => (
+							<option key={uid} value={uid}>
+								{p.displayName}
+							</option>
+						))}
+					</select>
+				</div>
 			)}
 		</div>
 	);

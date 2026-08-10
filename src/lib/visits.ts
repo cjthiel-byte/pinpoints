@@ -14,21 +14,30 @@ export function visitDocId(userId: string, locationId: string) {
 	return `${userId}_${locationId}`;
 }
 
+export interface VisitRecord {
+	userId: string;
+	locationId: string;
+	locationType: LocationType;
+	countryCode: string;
+}
+
 // Subscribes to every visit across every user (allowed by the Firestore rules —
 // any authenticated user can read all visits) rather than filtering to one
-// user, so "My visits" / "All users" / "Individual user" view modes can all be
-// derived from the same data without re-querying when the mode changes.
-export function subscribeToAllVisits(onChange: (visitsByLocation: Map<string, Set<string>>) => void) {
+// user, so "My visits" / "All users" / "Individual user" view modes, and the
+// stats panel, can all be derived from the same data without re-querying.
+export function subscribeToAllVisits(onChange: (records: VisitRecord[]) => void) {
 	return onSnapshot(collection(db, 'visits'), (snapshot) => {
-		const visitsByLocation = new Map<string, Set<string>>();
+		const records: VisitRecord[] = [];
 		snapshot.forEach((docSnap) => {
 			const data = docSnap.data();
-			const locationId = data.locationId as string;
-			const userId = data.userId as string;
-			if (!visitsByLocation.has(locationId)) visitsByLocation.set(locationId, new Set());
-			visitsByLocation.get(locationId)!.add(userId);
+			records.push({
+				userId: data.userId,
+				locationId: data.locationId,
+				locationType: data.locationType,
+				countryCode: data.countryCode,
+			});
 		});
-		onChange(visitsByLocation);
+		onChange(records);
 	});
 }
 

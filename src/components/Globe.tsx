@@ -1,12 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import * as Cesium from 'cesium';
 import 'cesium/Build/Cesium/Widgets/widgets.css';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from '../lib/firebase';
-import { addVisit, removeVisit, subscribeToAllVisits } from '../lib/visits';
+import { addVisit, removeVisit, subscribeToAllVisits, type VisitRecord } from '../lib/visits';
 import { getSubdivisionTerm } from '../lib/terminology';
 import { DEFAULT_COLOR, blendColors } from '../lib/colors';
 import { subscribeToAllUsers, type UserProfile } from '../lib/users';
+import { computeStats } from '../lib/stats';
 
 declare global {
 	interface Window {
@@ -47,15 +48,19 @@ export default function Globe() {
 	const activeDrillStateRef = useRef<string | null>(null);
 	const allVisitsRef = useRef<Map<string, Set<string>>>(new Map());
 	const usersRef = useRef<Map<string, UserProfile>>(new Map());
+	const countryNamesRef = useRef<Map<string, string>>(new Map());
 	const userIdRef = useRef<string | null>(null);
 	const viewModeRef = useRef<ViewMode>({ type: 'mine' });
 
 	const [userId, setUserId] = useState<string | null>(null);
 	const [users, setUsers] = useState<Map<string, UserProfile>>(new Map());
+	const [visitRecords, setVisitRecords] = useState<VisitRecord[]>([]);
 	const [viewMode, setViewMode] = useState<ViewMode>({ type: 'mine' });
 	const [toastMessage, setToastMessage] = useState<string | null>(null);
 	const [drillCountry, setDrillCountry] = useState<{ code: string; name: string } | null>(null);
 	const [drillState, setDrillState] = useState<{ code: string; name: string } | null>(null);
+	const [showStats, setShowStats] = useState(false);
+	const [statsScope, setStatsScope] = useState<'mine' | 'all'>('mine');
 
 	useEffect(() => {
 		return onAuthStateChanged(auth, (user) => setUserId(user?.uid ?? null));
@@ -75,6 +80,11 @@ export default function Globe() {
 		viewModeRef.current = viewMode;
 		applyVisitedColors();
 	}, [viewMode]);
+
+	const stats = useMemo(
+		() => computeStats(visitRecords, statsScope === 'mine' ? (userId ?? undefined) : undefined),
+		[visitRecords, statsScope, userId],
+	);
 
 	function colorForLocation(locationId: string): Cesium.Color {
 		const mode = viewModeRef.current;
@@ -137,12 +147,19 @@ export default function Globe() {
 			allVisitsRef.current = new Map();
 			usersRef.current = new Map();
 			setUsers(new Map());
+			setVisitRecords([]);
 			applyVisitedColors();
 			return;
 		}
 
-		const unsubVisits = subscribeToAllVisits((map) => {
+		const unsubVisits = subscribeToAllVisits((records) => {
+			const map = new Map<string, Set<string>>();
+			for (const r of records) {
+				if (!map.has(r.locationId)) map.set(r.locationId, new Set());
+				map.get(r.locationId)!.add(r.userId);
+			}
 			allVisitsRef.current = map;
+			setVisitRecords(records);
 			applyVisitedColors();
 		});
 		const unsubUsers = subscribeToAllUsers((map) => {
@@ -393,6 +410,11 @@ export default function Globe() {
 			if (cancelled) return;
 			viewer.dataSources.add(dataSource);
 			countriesDataSourceRef.current = dataSource;
+			for (const entity of dataSource.entities.values) {
+				const iso = entity.properties?.ISO_A3?.getValue();
+				const name = entity.properties?.NAME?.getValue();
+				if (iso && name && !countryNamesRef.current.has(iso)) countryNamesRef.current.set(iso, name);
+			}
 			applyVisitedColors();
 
 			viewer.camera.moveEnd.addEventListener(handleZoomChange);
@@ -479,6 +501,72 @@ export default function Globe() {
 			>
 				Reset view
 			</button>
+			{userId && users.has(userId) && (
+				<button
+					onClick={() => setShowStats((s) => !s)}
+					className="absolute bottom-16 right-4 rounded-md bg-slate-950/80 px-3 py-2 text-sm font-medium text-slate-200 backdrop-blur hover:bg-slate-900"
+				>
+					Stats
+				</button>
+			)}
+			{showStats && userId && users.has(userId) && (
+				<div className="absolute bottom-28 right-4 flex max-h-[55vh] w-72 flex-col gap-3 overflow-y-auto rounded-md bg-slate-950/90 p-4 text-sm text-slate-200 backdrop-blur">
+					<div className="flex gap-2">
+						<button
+							onClick={() => setStatsScope('mine')}
+							className={`flex-1 rounded px-2 py-1 ${
+								statsScope === 'mine' ? 'bg-slate-700 text-white' : 'text-slate-300 hover:bg-slate-800'
+							}`}
+						>
+							Me
+						</button>
+						<button
+							onClick={() => setStatsScope('all')}
+							className={`flex-1 rounded px-2 py-1 ${
+								statsScope === 'all' ? 'bg-slate-700 text-white' : 'text-slate-300 hover:bg-slate-800'
+							}`}
+						>
+							Everyone
+						</button>
+					</div>
+					<dl className="flex flex-col gap-1.5">
+						<div className="flex justify-between">
+							<dt className="text-slate-400">Countries</dt>
+							<dd>
+								{stats.countriesVisited} / {stats.countryTotal} (
+								{((stats.countriesVisited / stats.countryTotal) * 100).toFixed(1)}%)
+							</dd>
+						</div>
+						<div className="flex justify-between">
+							<dt className="text-slate-400">US States</dt>
+							<dd>
+								{stats.statesVisited} / {stats.stateTotal}
+							</dd>
+						</div>
+						<div className="flex justify-between">
+							<dt className="text-slate-400">US Counties</dt>
+							<dd>
+								{stats.countiesVisited} / {stats.countyTotal}
+							</dd>
+						</div>
+					</dl>
+					{stats.subdivisionsByCountry.length > 0 && (
+						<div className="flex flex-col gap-1 border-t border-slate-800 pt-3">
+							<p className="mb-1 text-xs uppercase tracking-wide text-slate-400">By country</p>
+							<ul className="flex flex-col gap-1">
+								{stats.subdivisionsByCountry.map((s) => (
+									<li key={s.countryCode} className="flex justify-between gap-2">
+										<span className="truncate">{countryNamesRef.current.get(s.countryCode) ?? s.countryCode}</span>
+										<span className="shrink-0 text-slate-300">
+											{s.visited} of {s.total} {getSubdivisionTerm(s.countryCode, 'level1').plural}
+										</span>
+									</li>
+								))}
+							</ul>
+						</div>
+					)}
+				</div>
+			)}
 			{toastMessage && (
 				<div className="pointer-events-none absolute bottom-6 left-1/2 -translate-x-1/2 rounded-md bg-slate-950/90 px-4 py-2 text-sm text-slate-200 backdrop-blur">
 					{toastMessage}

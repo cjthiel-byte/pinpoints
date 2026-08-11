@@ -85,7 +85,7 @@ export default function AuthPanel() {
 
 	if (user && !profile) {
 		return (
-			<div className="flex w-full max-w-xs flex-col gap-3">
+			<div className="flex w-full max-w-[220px] sm:max-w-xs animate-fade-in flex-col gap-3">
 				<p className="text-sm text-slate-300">Pick a color for your pins</p>
 				<div className="grid grid-cols-4 gap-2">
 					{COLOR_PALETTE.map((c) => (
@@ -107,10 +107,12 @@ export default function AuthPanel() {
 
 	if (user && profile) {
 		return (
-			<div className="flex flex-col items-center gap-3">
-				<p className="flex items-center gap-2 text-sm text-slate-300">
-					<span className="h-3 w-3 rounded-full" style={{ backgroundColor: profile.color }} />
-					Signed in as <span className="font-medium text-white">{profile.displayName}</span>
+			<div className="flex w-full max-w-[220px] sm:max-w-xs animate-fade-in flex-col items-center gap-3">
+				<p className="flex w-full items-center justify-center gap-2 text-sm text-slate-300">
+					<span className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: profile.color }} />
+					<span className="min-w-0 truncate">
+						Signed in as <span className="font-medium text-white">{profile.displayName}</span>
+					</span>
 				</p>
 				<button
 					onClick={() => signOut(auth)}
@@ -123,7 +125,7 @@ export default function AuthPanel() {
 	}
 
 	return (
-		<div className="flex w-full max-w-xs flex-col gap-4">
+		<div className="flex w-full max-w-[220px] sm:max-w-xs animate-fade-in flex-col gap-4">
 			<button
 				onClick={handleGoogleSignIn}
 				className="rounded-md bg-white px-4 py-2 text-sm font-medium text-slate-900 hover:bg-slate-200"

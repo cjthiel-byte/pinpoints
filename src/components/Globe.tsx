@@ -510,7 +510,7 @@ export default function Globe() {
 				</button>
 			)}
 			{showStats && userId && users.has(userId) && (
-				<div className="absolute bottom-28 right-4 flex max-h-[55vh] w-72 flex-col gap-3 overflow-y-auto rounded-md bg-slate-950/90 p-4 text-sm text-slate-200 backdrop-blur">
+				<div className="absolute bottom-28 right-4 flex max-h-[55vh] w-72 max-w-[calc(100vw-2rem)] flex-col gap-3 overflow-y-auto rounded-md bg-slate-950/90 p-4 text-sm text-slate-200 backdrop-blur animate-fade-in">
 					<div className="flex gap-2">
 						<button
 							onClick={() => setStatsScope('mine')}
@@ -568,23 +568,23 @@ export default function Globe() {
 				</div>
 			)}
 			{toastMessage && (
-				<div className="pointer-events-none absolute bottom-6 left-1/2 -translate-x-1/2 rounded-md bg-slate-950/90 px-4 py-2 text-sm text-slate-200 backdrop-blur">
+				<div className="pointer-events-none absolute bottom-6 left-1/2 max-w-[calc(100vw-3rem)] -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-950/90 px-4 py-2 text-sm text-slate-200 backdrop-blur animate-fade-in">
 					{toastMessage}
 				</div>
 			)}
 			{drillState ? (
-				<div className="pointer-events-none absolute left-6 top-16 rounded-md bg-slate-950/80 px-3 py-1.5 text-sm text-slate-200 backdrop-blur">
+				<div className="pointer-events-none absolute left-6 top-16 max-w-[calc(100vw-3rem)] truncate rounded-md bg-slate-950/80 px-3 py-1.5 text-sm text-slate-200 backdrop-blur animate-fade-in">
 					{drillState.name} — {getSubdivisionTerm('USA', 'level2').plural}
 				</div>
 			) : (
 				drillCountry && (
-					<div className="pointer-events-none absolute left-6 top-16 rounded-md bg-slate-950/80 px-3 py-1.5 text-sm text-slate-200 backdrop-blur">
+					<div className="pointer-events-none absolute left-6 top-16 max-w-[calc(100vw-3rem)] truncate rounded-md bg-slate-950/80 px-3 py-1.5 text-sm text-slate-200 backdrop-blur animate-fade-in">
 						{drillCountry.name} — {getSubdivisionTerm(drillCountry.code, 'level1').plural}
 					</div>
 				)
 			)}
 			{userId && users.has(userId) && (
-				<div className="absolute right-6 top-40 flex flex-col gap-1.5 rounded-md bg-slate-950/80 p-3 text-sm backdrop-blur">
+				<div className="absolute right-6 top-40 flex w-56 max-w-[calc(100vw-3rem)] flex-col gap-1.5 rounded-md bg-slate-950/80 p-3 text-sm backdrop-blur animate-fade-in">
 					<button
 						onClick={() => setViewMode({ type: 'mine' })}
 						className={`rounded px-2 py-1 text-left ${
@@ -606,7 +606,7 @@ export default function Globe() {
 						onChange={(e) => {
 							if (e.target.value) setViewMode({ type: 'individual', userId: e.target.value });
 						}}
-						className={`rounded border border-slate-700 bg-slate-900 px-2 py-1 ${
+						className={`w-full rounded border border-slate-700 bg-slate-900 px-2 py-1 ${
 							viewMode.type === 'individual' ? 'text-white' : 'text-slate-300'
 						}`}
 					>

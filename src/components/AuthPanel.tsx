@@ -159,19 +159,23 @@ export default function AuthPanel() {
 
 		return (
 			<div className="flex w-full max-w-[220px] animate-fade-in flex-col items-center gap-3 sm:max-w-xs">
-				<p className="flex w-full items-center justify-center gap-2 text-sm text-slate-300">
+				<div className="flex w-full items-center justify-center gap-2 text-sm text-slate-300">
 					<button
 						type="button"
 						onClick={() => setEditingColor(true)}
 						title="Change color"
 						aria-label="Change color"
-						style={{ backgroundColor: profile.color, boxShadow: `0 0 6px ${profile.color}` }}
-						className="h-3 w-3 shrink-0 rounded-full ring-1 ring-white/30 ring-offset-1 ring-offset-slate-950 transition-transform hover:scale-125"
-					/>
+						className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full ring-1 ring-transparent transition-transform hover:scale-110 hover:ring-white/50"
+					>
+						<span
+							className="h-3 w-3 rounded-full ring-1 ring-white/30"
+							style={{ backgroundColor: profile.color, boxShadow: `0 0 6px ${profile.color}` }}
+						/>
+					</button>
 					<span className="min-w-0 truncate">
 						Signed in as <span className="font-medium text-white">{profile.displayName}</span>
 					</span>
-				</p>
+				</div>
 				<button
 					onClick={() => signOut(auth)}
 					className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium transition-colors hover:bg-slate-700 active:bg-slate-600"

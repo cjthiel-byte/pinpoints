@@ -3,10 +3,10 @@ import * as Cesium from 'cesium';
 import 'cesium/Build/Cesium/Widgets/widgets.css';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from '../lib/firebase';
-import { addVisit, removeVisit, subscribeToAllVisits, type VisitRecord } from '../lib/visits';
+import { addVisit, removeVisit, subscribeToUserVisits, type VisitRecord } from '../lib/visits';
 import { getSubdivisionTerm } from '../lib/terminology';
-import { DEFAULT_COLOR, blendColors } from '../lib/colors';
-import { subscribeToAllUsers, type UserProfile } from '../lib/users';
+import { DEFAULT_COLOR } from '../lib/colors';
+import { subscribeToUserProfile } from '../lib/users';
 import { computeStats } from '../lib/stats';
 
 declare global {
@@ -27,8 +27,6 @@ const ADMIN1_ZOOM_HEIGHT = 2_500_000;
 // of the state. US-only, per the brief's MVP scope for level2 data.
 const COUNTY_ZOOM_HEIGHT = 400_000;
 
-type ViewMode = { type: 'mine' } | { type: 'all' } | { type: 'individual'; userId: string };
-
 function preparePolygonEntities(dataSource: Cesium.GeoJsonDataSource) {
 	for (const entity of dataSource.entities.values) {
 		if (entity.polygon) {
@@ -46,21 +44,18 @@ export default function Globe() {
 	const countyCacheRef = useRef<Map<string, Cesium.GeoJsonDataSource>>(new Map());
 	const activeDrillCountryRef = useRef<string | null>(null);
 	const activeDrillStateRef = useRef<string | null>(null);
-	const allVisitsRef = useRef<Map<string, Set<string>>>(new Map());
-	const usersRef = useRef<Map<string, UserProfile>>(new Map());
+	const myVisitedIdsRef = useRef<Set<string>>(new Set());
+	const myColorRef = useRef<string>(DEFAULT_COLOR);
 	const countryNamesRef = useRef<Map<string, string>>(new Map());
 	const userIdRef = useRef<string | null>(null);
-	const viewModeRef = useRef<ViewMode>({ type: 'mine' });
 
 	const [userId, setUserId] = useState<string | null>(null);
-	const [users, setUsers] = useState<Map<string, UserProfile>>(new Map());
+	const [hasProfile, setHasProfile] = useState(false);
 	const [visitRecords, setVisitRecords] = useState<VisitRecord[]>([]);
-	const [viewMode, setViewMode] = useState<ViewMode>({ type: 'mine' });
 	const [toastMessage, setToastMessage] = useState<string | null>(null);
 	const [drillCountry, setDrillCountry] = useState<{ code: string; name: string } | null>(null);
 	const [drillState, setDrillState] = useState<{ code: string; name: string } | null>(null);
 	const [showStats, setShowStats] = useState(false);
-	const [statsScope, setStatsScope] = useState<'mine' | 'all'>('mine');
 
 	useEffect(() => {
 		return onAuthStateChanged(auth, (user) => setUserId(user?.uid ?? null));
@@ -76,42 +71,11 @@ export default function Globe() {
 		userIdRef.current = userId;
 	}, [userId]);
 
-	useEffect(() => {
-		viewModeRef.current = viewMode;
-		applyVisitedColors();
-	}, [viewMode]);
-
-	const stats = useMemo(
-		() => computeStats(visitRecords, statsScope === 'mine' ? (userId ?? undefined) : undefined),
-		[visitRecords, statsScope, userId],
-	);
+	const stats = useMemo(() => computeStats(visitRecords), [visitRecords]);
 
 	function colorForLocation(locationId: string): Cesium.Color {
-		const mode = viewModeRef.current;
-		const visitors = allVisitsRef.current.get(locationId);
-
-		if (mode.type === 'mine') {
-			const uid = userIdRef.current;
-			if (!uid || !visitors?.has(uid)) return FILL_COLOR;
-			const hex = usersRef.current.get(uid)?.color ?? DEFAULT_COLOR;
-			return Cesium.Color.fromCssColorString(hex).withAlpha(0.75);
-		}
-
-		if (mode.type === 'individual') {
-			if (!visitors?.has(mode.userId)) return FILL_COLOR;
-			const hex = usersRef.current.get(mode.userId)?.color ?? DEFAULT_COLOR;
-			return Cesium.Color.fromCssColorString(hex).withAlpha(0.75);
-		}
-
-		// 'all'
-		if (!visitors || visitors.size === 0) return FILL_COLOR;
-		const hexColors: string[] = [];
-		for (const uid of visitors) {
-			const hex = usersRef.current.get(uid)?.color;
-			if (hex) hexColors.push(hex);
-		}
-		if (hexColors.length === 0) return FILL_COLOR;
-		return Cesium.Color.fromCssColorString(blendColors(hexColors)).withAlpha(0.75);
+		if (!myVisitedIdsRef.current.has(locationId)) return FILL_COLOR;
+		return Cesium.Color.fromCssColorString(myColorRef.current).withAlpha(0.75);
 	}
 
 	function applyVisitedColors() {
@@ -144,33 +108,28 @@ export default function Globe() {
 
 	useEffect(() => {
 		if (!userId) {
-			allVisitsRef.current = new Map();
-			usersRef.current = new Map();
-			setUsers(new Map());
+			myVisitedIdsRef.current = new Set();
+			myColorRef.current = DEFAULT_COLOR;
+			setHasProfile(false);
 			setVisitRecords([]);
 			applyVisitedColors();
 			return;
 		}
 
-		const unsubVisits = subscribeToAllVisits((records) => {
-			const map = new Map<string, Set<string>>();
-			for (const r of records) {
-				if (!map.has(r.locationId)) map.set(r.locationId, new Set());
-				map.get(r.locationId)!.add(r.userId);
-			}
-			allVisitsRef.current = map;
+		const unsubVisits = subscribeToUserVisits(userId, (records) => {
+			myVisitedIdsRef.current = new Set(records.map((r) => r.locationId));
 			setVisitRecords(records);
 			applyVisitedColors();
 		});
-		const unsubUsers = subscribeToAllUsers((map) => {
-			usersRef.current = map;
-			setUsers(map);
+		const unsubProfile = subscribeToUserProfile(userId, (profile) => {
+			myColorRef.current = profile?.color ?? DEFAULT_COLOR;
+			setHasProfile(!!profile);
 			applyVisitedColors();
 		});
 
 		return () => {
 			unsubVisits();
-			unsubUsers();
+			unsubProfile();
 		};
 	}, [userId]);
 
@@ -430,10 +389,6 @@ export default function Globe() {
 					setToastMessage('Sign in to start tracking your visits');
 					return;
 				}
-				if (viewModeRef.current.type !== 'mine') {
-					setToastMessage('Switch to "My visits" to edit');
-					return;
-				}
 
 				const picked = viewer.scene.pick(movement.position);
 				if (!Cesium.defined(picked) || !(picked.id instanceof Cesium.Entity)) return;
@@ -469,8 +424,7 @@ export default function Globe() {
 				}
 				if (!locationId || !countryCode) return;
 
-				const alreadyVisited = allVisitsRef.current.get(locationId)?.has(currentUserId) ?? false;
-				if (alreadyVisited) {
+				if (myVisitedIdsRef.current.has(locationId)) {
 					removeVisit(currentUserId, locationId);
 				} else {
 					addVisit(currentUserId, { locationId, locationType: visitLocationType, countryCode, displayName });
@@ -501,7 +455,7 @@ export default function Globe() {
 			>
 				Reset view
 			</button>
-			{userId && users.has(userId) && (
+			{userId && hasProfile && (
 				<button
 					onClick={() => setShowStats((s) => !s)}
 					className="absolute bottom-16 right-4 rounded-md bg-slate-950/80 px-3 py-2 text-sm font-medium text-slate-200 backdrop-blur hover:bg-slate-900"
@@ -509,26 +463,8 @@ export default function Globe() {
 					Stats
 				</button>
 			)}
-			{showStats && userId && users.has(userId) && (
+			{showStats && userId && hasProfile && (
 				<div className="absolute bottom-28 right-4 flex max-h-[55vh] w-72 max-w-[calc(100vw-2rem)] flex-col gap-3 overflow-y-auto rounded-md bg-slate-950/90 p-4 text-sm text-slate-200 backdrop-blur animate-fade-in">
-					<div className="flex gap-2">
-						<button
-							onClick={() => setStatsScope('mine')}
-							className={`flex-1 rounded px-2 py-1 ${
-								statsScope === 'mine' ? 'bg-slate-700 text-white' : 'text-slate-300 hover:bg-slate-800'
-							}`}
-						>
-							Me
-						</button>
-						<button
-							onClick={() => setStatsScope('all')}
-							className={`flex-1 rounded px-2 py-1 ${
-								statsScope === 'all' ? 'bg-slate-700 text-white' : 'text-slate-300 hover:bg-slate-800'
-							}`}
-						>
-							Everyone
-						</button>
-					</div>
 					<dl className="flex flex-col gap-1.5">
 						<div className="flex justify-between">
 							<dt className="text-slate-400">Countries</dt>
@@ -582,44 +518,6 @@ export default function Globe() {
 						{drillCountry.name} — {getSubdivisionTerm(drillCountry.code, 'level1').plural}
 					</div>
 				)
-			)}
-			{userId && users.has(userId) && (
-				<div className="absolute right-6 top-40 flex w-56 max-w-[calc(100vw-3rem)] flex-col gap-1.5 rounded-md bg-slate-950/80 p-3 text-sm backdrop-blur animate-fade-in">
-					<button
-						onClick={() => setViewMode({ type: 'mine' })}
-						className={`rounded px-2 py-1 text-left ${
-							viewMode.type === 'mine' ? 'bg-slate-700 text-white' : 'text-slate-300 hover:bg-slate-800'
-						}`}
-					>
-						My visits
-					</button>
-					<button
-						onClick={() => setViewMode({ type: 'all' })}
-						className={`rounded px-2 py-1 text-left ${
-							viewMode.type === 'all' ? 'bg-slate-700 text-white' : 'text-slate-300 hover:bg-slate-800'
-						}`}
-					>
-						All users
-					</button>
-					<select
-						value={viewMode.type === 'individual' ? viewMode.userId : ''}
-						onChange={(e) => {
-							if (e.target.value) setViewMode({ type: 'individual', userId: e.target.value });
-						}}
-						className={`w-full rounded border border-slate-700 bg-slate-900 px-2 py-1 ${
-							viewMode.type === 'individual' ? 'text-white' : 'text-slate-300'
-						}`}
-					>
-						<option value="" disabled>
-							Individual…
-						</option>
-						{[...users.entries()].map(([uid, p]) => (
-							<option key={uid} value={uid}>
-								{p.displayName}
-							</option>
-						))}
-					</select>
-				</div>
 			)}
 		</div>
 	);

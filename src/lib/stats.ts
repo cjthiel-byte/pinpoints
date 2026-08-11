@@ -26,15 +26,13 @@ export interface Stats {
 
 const admin1Counts: Record<string, number> = geoCounts.admin1;
 
-export function computeStats(records: VisitRecord[], filterUserId?: string): Stats {
-	const relevant = filterUserId ? records.filter((r) => r.userId === filterUserId) : records;
-
+export function computeStats(records: VisitRecord[]): Stats {
 	const countries = new Set<string>();
 	const states = new Set<string>();
 	const counties = new Set<string>();
 	const subdivisionsByCountry = new Map<string, Set<string>>();
 
-	for (const r of relevant) {
+	for (const r of records) {
 		if (r.locationType === 'country') {
 			countries.add(r.locationId);
 		} else if (r.locationType === 'level1') {

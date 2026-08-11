@@ -1,4 +1,4 @@
-import { collection, deleteDoc, doc, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore';
+import { collection, deleteDoc, doc, onSnapshot, query, serverTimestamp, setDoc, where } from 'firebase/firestore';
 import { db } from './firebase';
 
 export type LocationType = 'country' | 'level1' | 'level2';
@@ -21,12 +21,9 @@ export interface VisitRecord {
 	countryCode: string;
 }
 
-// Subscribes to every visit across every user (allowed by the Firestore rules —
-// any authenticated user can read all visits) rather than filtering to one
-// user, so "My visits" / "All users" / "Individual user" view modes, and the
-// stats panel, can all be derived from the same data without re-querying.
-export function subscribeToAllVisits(onChange: (records: VisitRecord[]) => void) {
-	return onSnapshot(collection(db, 'visits'), (snapshot) => {
+export function subscribeToUserVisits(userId: string, onChange: (records: VisitRecord[]) => void) {
+	const visitsQuery = query(collection(db, 'visits'), where('userId', '==', userId));
+	return onSnapshot(visitsQuery, (snapshot) => {
 		const records: VisitRecord[] = [];
 		snapshot.forEach((docSnap) => {
 			const data = docSnap.data();

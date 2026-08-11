@@ -27,6 +27,36 @@ const ADMIN1_ZOOM_HEIGHT = 2_500_000;
 // of the state. US-only, per the brief's MVP scope for level2 data.
 const COUNTY_ZOOM_HEIGHT = 400_000;
 
+function StatBar({
+	label,
+	visited,
+	total,
+	color,
+}: {
+	label: string;
+	visited: number;
+	total: number;
+	color: string;
+}) {
+	const pct = total > 0 ? Math.min(100, (visited / total) * 100) : 0;
+	return (
+		<div className="flex flex-col gap-1">
+			<div className="flex items-baseline justify-between text-xs">
+				<span className="text-slate-400">{label}</span>
+				<span className="font-medium text-white">
+					{visited} / {total}
+				</span>
+			</div>
+			<div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
+				<div
+					className="h-full rounded-full transition-all duration-500"
+					style={{ width: `${pct}%`, backgroundColor: color }}
+				/>
+			</div>
+		</div>
+	);
+}
+
 function preparePolygonEntities(dataSource: Cesium.GeoJsonDataSource) {
 	for (const entity of dataSource.entities.values) {
 		if (entity.polygon) {
@@ -51,6 +81,7 @@ export default function Globe() {
 
 	const [userId, setUserId] = useState<string | null>(null);
 	const [hasProfile, setHasProfile] = useState(false);
+	const [myColor, setMyColor] = useState(DEFAULT_COLOR);
 	const [visitRecords, setVisitRecords] = useState<VisitRecord[]>([]);
 	const [toastMessage, setToastMessage] = useState<string | null>(null);
 	const [drillCountry, setDrillCountry] = useState<{ code: string; name: string } | null>(null);
@@ -111,6 +142,7 @@ export default function Globe() {
 			myVisitedIdsRef.current = new Set();
 			myColorRef.current = DEFAULT_COLOR;
 			setHasProfile(false);
+			setMyColor(DEFAULT_COLOR);
 			setVisitRecords([]);
 			applyVisitedColors();
 			return;
@@ -122,7 +154,9 @@ export default function Globe() {
 			applyVisitedColors();
 		});
 		const unsubProfile = subscribeToUserProfile(userId, (profile) => {
-			myColorRef.current = profile?.color ?? DEFAULT_COLOR;
+			const color = profile?.color ?? DEFAULT_COLOR;
+			myColorRef.current = color;
+			setMyColor(color);
 			setHasProfile(!!profile);
 			applyVisitedColors();
 		});
@@ -451,41 +485,49 @@ export default function Globe() {
 			<div ref={containerRef} className="h-full w-full" />
 			<button
 				onClick={() => viewerRef.current?.camera.flyHome(1.5)}
-				className="absolute bottom-4 right-4 rounded-md bg-slate-950/80 px-3 py-2 text-sm font-medium text-slate-200 backdrop-blur hover:bg-slate-900"
+				className="absolute bottom-4 right-4 flex items-center gap-1.5 rounded-lg border border-white/10 bg-slate-950/80 px-3 py-2 text-sm font-medium text-slate-200 shadow-lg shadow-black/40 backdrop-blur-md transition-colors hover:bg-slate-900 active:bg-slate-800"
 			>
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} className="h-4 w-4">
+					<circle cx="12" cy="12" r="7.5" />
+					<circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" />
+					<path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3" strokeLinecap="round" />
+				</svg>
 				Reset view
 			</button>
 			{userId && hasProfile && (
 				<button
 					onClick={() => setShowStats((s) => !s)}
-					className="absolute bottom-16 right-4 rounded-md bg-slate-950/80 px-3 py-2 text-sm font-medium text-slate-200 backdrop-blur hover:bg-slate-900"
+					className="absolute bottom-16 right-4 flex items-center gap-1.5 rounded-lg border border-white/10 bg-slate-950/80 px-3 py-2 text-sm font-medium text-slate-200 shadow-lg shadow-black/40 backdrop-blur-md transition-colors hover:bg-slate-900 active:bg-slate-800"
 				>
+					<svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4">
+						<rect x="4" y="13" width="3.5" height="7" rx="0.5" />
+						<rect x="10.25" y="9" width="3.5" height="11" rx="0.5" />
+						<rect x="16.5" y="4" width="3.5" height="16" rx="0.5" />
+					</svg>
 					Stats
 				</button>
 			)}
 			{showStats && userId && hasProfile && (
-				<div className="absolute bottom-28 right-4 flex max-h-[55vh] w-72 max-w-[calc(100vw-2rem)] flex-col gap-3 overflow-y-auto rounded-md bg-slate-950/90 p-4 text-sm text-slate-200 backdrop-blur animate-fade-in">
-					<dl className="flex flex-col gap-1.5">
-						<div className="flex justify-between">
-							<dt className="text-slate-400">Countries</dt>
-							<dd>
-								{stats.countriesVisited} / {stats.countryTotal} (
-								{((stats.countriesVisited / stats.countryTotal) * 100).toFixed(1)}%)
-							</dd>
+				<div className="absolute bottom-28 right-4 flex max-h-[55vh] w-72 max-w-[calc(100vw-2rem)] flex-col gap-4 overflow-y-auto rounded-xl border border-white/10 bg-slate-950/90 p-4 text-sm text-slate-200 shadow-2xl shadow-black/50 backdrop-blur-md animate-fade-in">
+					<div>
+						<div className="flex items-baseline gap-2">
+							<span className="text-3xl font-bold tabular-nums text-white">{stats.countriesVisited}</span>
+							<span className="text-sm text-slate-400">/ {stats.countryTotal} countries</span>
 						</div>
-						<div className="flex justify-between">
-							<dt className="text-slate-400">US States</dt>
-							<dd>
-								{stats.statesVisited} / {stats.stateTotal}
-							</dd>
+						<p className="mt-0.5 text-xs text-slate-500">
+							{((stats.countriesVisited / stats.countryTotal) * 100).toFixed(1)}% of the world
+						</p>
+						<div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
+							<div
+								className="h-full rounded-full transition-all duration-500"
+								style={{ width: `${(stats.countriesVisited / stats.countryTotal) * 100}%`, backgroundColor: myColor }}
+							/>
 						</div>
-						<div className="flex justify-between">
-							<dt className="text-slate-400">US Counties</dt>
-							<dd>
-								{stats.countiesVisited} / {stats.countyTotal}
-							</dd>
-						</div>
-					</dl>
+					</div>
+					<div className="flex flex-col gap-2 border-t border-slate-800 pt-3">
+						<StatBar label="US States" visited={stats.statesVisited} total={stats.stateTotal} color={myColor} />
+						<StatBar label="US Counties" visited={stats.countiesVisited} total={stats.countyTotal} color={myColor} />
+					</div>
 					{stats.subdivisionsByCountry.length > 0 && (
 						<div className="flex flex-col gap-1 border-t border-slate-800 pt-3">
 							<p className="mb-1 text-xs uppercase tracking-wide text-slate-400">By country</p>
@@ -504,17 +546,17 @@ export default function Globe() {
 				</div>
 			)}
 			{toastMessage && (
-				<div className="pointer-events-none absolute bottom-6 left-1/2 max-w-[calc(100vw-3rem)] -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-950/90 px-4 py-2 text-sm text-slate-200 backdrop-blur animate-fade-in">
+				<div className="pointer-events-none absolute bottom-6 left-1/2 max-w-[calc(100vw-3rem)] -translate-x-1/2 whitespace-nowrap rounded-lg border border-white/10 bg-slate-950/90 px-4 py-2 text-sm text-slate-200 shadow-xl shadow-black/40 backdrop-blur-md animate-fade-in">
 					{toastMessage}
 				</div>
 			)}
 			{drillState ? (
-				<div className="pointer-events-none absolute left-6 top-16 max-w-[calc(100vw-3rem)] truncate rounded-md bg-slate-950/80 px-3 py-1.5 text-sm text-slate-200 backdrop-blur animate-fade-in">
+				<div className="pointer-events-none absolute left-6 top-16 max-w-[calc(100vw-3rem)] truncate rounded-lg border border-white/10 bg-slate-950/80 px-3 py-1.5 text-sm text-slate-200 shadow-lg shadow-black/40 backdrop-blur-md animate-fade-in">
 					{drillState.name} — {getSubdivisionTerm('USA', 'level2').plural}
 				</div>
 			) : (
 				drillCountry && (
-					<div className="pointer-events-none absolute left-6 top-16 max-w-[calc(100vw-3rem)] truncate rounded-md bg-slate-950/80 px-3 py-1.5 text-sm text-slate-200 backdrop-blur animate-fade-in">
+					<div className="pointer-events-none absolute left-6 top-16 max-w-[calc(100vw-3rem)] truncate rounded-lg border border-white/10 bg-slate-950/80 px-3 py-1.5 text-sm text-slate-200 shadow-lg shadow-black/40 backdrop-blur-md animate-fade-in">
 						{drillCountry.name} — {getSubdivisionTerm(drillCountry.code, 'level1').plural}
 					</div>
 				)

@@ -15,9 +15,17 @@ const { title } = Astro.props;
 		<link rel="icon" href="/favicon.ico" />
 		<meta name="viewport" content="width=device-width" />
 		<meta name="generator" content={Astro.generator} />
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+		<link
+			href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap"
+			rel="stylesheet"
+		/>
 		<title>{title}</title>
 	</head>
-	<body class="bg-slate-950 text-slate-100">
+	<body class="relative min-h-screen bg-slate-950 font-sans text-slate-100 antialiased">
+		<div class="pointer-events-none fixed inset-0 -z-10 bg-[radial-gradient(ellipse_at_center,_#0f1b3d_0%,_#020308_70%)]">
+		</div>
 		<slot />
 	</body>
 </html>

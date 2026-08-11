@@ -1,4 +1,4 @@
-import { doc, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore';
+import { doc, onSnapshot, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import { db } from './firebase';
 
 export interface UserProfile {
@@ -12,6 +12,10 @@ export async function createUserProfile(userId: string, profile: UserProfile) {
 		...profile,
 		joinedAt: serverTimestamp(),
 	});
+}
+
+export async function updateUserColor(userId: string, color: string) {
+	await updateDoc(doc(db, 'users', userId), { color });
 }
 
 export function subscribeToUserProfile(userId: string, onChange: (profile: UserProfile | null) => void) {

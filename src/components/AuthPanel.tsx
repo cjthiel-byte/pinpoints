@@ -10,7 +10,7 @@ import {
 } from 'firebase/auth';
 import { auth } from '../lib/firebase';
 import { COLOR_PALETTE } from '../lib/colors';
-import { createUserProfile, subscribeToUserProfile, type UserProfile } from '../lib/users';
+import { createUserProfile, subscribeToUserProfile, updateUserColor, type UserProfile } from '../lib/users';
 
 const inputClasses =
 	'rounded-lg border border-slate-700 bg-slate-900/80 px-3 py-2 text-sm text-white placeholder:text-slate-500 transition-colors focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500/50';
@@ -24,6 +24,7 @@ export default function AuthPanel() {
 	const [password, setPassword] = useState('');
 	const [mode, setMode] = useState<'sign-in' | 'sign-up'>('sign-in');
 	const [error, setError] = useState<string | null>(null);
+	const [editingColor, setEditingColor] = useState(false);
 
 	useEffect(() => {
 		return onAuthStateChanged(auth, (nextUser) => {
@@ -36,6 +37,7 @@ export default function AuthPanel() {
 		if (!user) {
 			setProfile(null);
 			setProfileLoading(false);
+			setEditingColor(false);
 			return;
 		}
 		setProfileLoading(true);
@@ -82,6 +84,17 @@ export default function AuthPanel() {
 		}
 	}
 
+	async function handleUpdateColor(color: string) {
+		if (!user) return;
+		setError(null);
+		try {
+			await updateUserColor(user.uid, color);
+			setEditingColor(false);
+		} catch (err) {
+			setError((err as Error).message);
+		}
+	}
+
 	if (loading || profileLoading) {
 		return (
 			<div className="flex items-center gap-2 text-sm text-slate-400">
@@ -114,12 +127,46 @@ export default function AuthPanel() {
 	}
 
 	if (user && profile) {
+		if (editingColor) {
+			return (
+				<div className="flex w-full max-w-[220px] animate-fade-in flex-col gap-3 sm:max-w-xs">
+					<p className="text-sm text-slate-300">Pick a color for your pins</p>
+					<div className="grid grid-cols-4 gap-2.5">
+						{COLOR_PALETTE.map((c) => (
+							<button
+								key={c.hex}
+								type="button"
+								onClick={() => handleUpdateColor(c.hex)}
+								title={c.name}
+								aria-label={c.name}
+								style={{ backgroundColor: c.hex }}
+								className={`h-9 w-9 rounded-full ring-2 ring-offset-2 ring-offset-slate-950 transition-all hover:scale-110 hover:ring-white/70 active:scale-95 ${
+									c.hex === profile.color ? 'ring-white' : 'ring-transparent'
+								}`}
+							/>
+						))}
+					</div>
+					{error && <p className="text-xs text-red-400">{error}</p>}
+					<button
+						onClick={() => setEditingColor(false)}
+						className="text-xs text-slate-400 transition-colors hover:text-slate-300"
+					>
+						Cancel
+					</button>
+				</div>
+			);
+		}
+
 		return (
 			<div className="flex w-full max-w-[220px] animate-fade-in flex-col items-center gap-3 sm:max-w-xs">
 				<p className="flex w-full items-center justify-center gap-2 text-sm text-slate-300">
-					<span
-						className="h-3 w-3 shrink-0 rounded-full"
+					<button
+						type="button"
+						onClick={() => setEditingColor(true)}
+						title="Change color"
+						aria-label="Change color"
 						style={{ backgroundColor: profile.color, boxShadow: `0 0 6px ${profile.color}` }}
+						className="h-3 w-3 shrink-0 rounded-full ring-1 ring-white/30 ring-offset-1 ring-offset-slate-950 transition-transform hover:scale-125"
 					/>
 					<span className="min-w-0 truncate">
 						Signed in as <span className="font-medium text-white">{profile.displayName}</span>

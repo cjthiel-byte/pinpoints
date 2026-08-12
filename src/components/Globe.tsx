@@ -74,6 +74,7 @@ export default function Globe() {
 	const modeRef = useRef<ViewMode>('country');
 	const applyModeVisibilityRef = useRef<(mode: ViewMode) => void>(() => {});
 	const loadAllAdmin1Ref = useRef<() => Promise<void>>(() => Promise.resolve());
+	const setLoadProgressRef = useRef<(loaded: number, total: number) => void>(() => {});
 
 	const [userId, setUserId] = useState<string | null>(null);
 	const [hasProfile, setHasProfile] = useState(false);
@@ -83,6 +84,7 @@ export default function Globe() {
 	const [showStats, setShowStats] = useState(false);
 	const [mode, setMode] = useState<ViewMode>('country');
 	const [loadingStates, setLoadingStates] = useState(false);
+	const [loadProgress, setLoadProgress] = useState({ loaded: 0, total: 0 });
 
 	useEffect(() => {
 		return onAuthStateChanged(auth, (user) => setUserId(user?.uid ?? null));
@@ -97,6 +99,10 @@ export default function Globe() {
 	useEffect(() => {
 		userIdRef.current = userId;
 	}, [userId]);
+
+	useEffect(() => {
+		setLoadProgressRef.current = (loaded, total) => setLoadProgress({ loaded, total });
+	}, []);
 
 	useEffect(() => {
 		modeRef.current = mode;
@@ -218,21 +224,29 @@ export default function Globe() {
 		function loadAllAdmin1(): Promise<void> {
 			if (admin1LoadPromise) return admin1LoadPromise;
 			const codes = Object.keys(geoCounts.admin1);
+			let loaded = 0;
+			setLoadProgressRef.current(0, codes.length);
 			admin1LoadPromise = Promise.allSettled(
 				codes.map(async (code) => {
-					if (admin1CacheRef.current.has(code)) return;
-					const dataSource = preparePolygonEntities(
-						await Cesium.GeoJsonDataSource.load(`/geo/admin1/${code}.geojson`, {
-							stroke: STROKE_COLOR,
-							fill: FILL_COLOR,
-							strokeWidth: 1,
-							clampToGround: false,
-						}),
-					);
-					if (cancelled) return;
-					admin1CacheRef.current.set(code, dataSource);
-					dataSource.show = false;
-					viewer.dataSources.add(dataSource);
+					try {
+						if (!admin1CacheRef.current.has(code)) {
+							const dataSource = preparePolygonEntities(
+								await Cesium.GeoJsonDataSource.load(`/geo/admin1/${code}.geojson`, {
+									stroke: STROKE_COLOR,
+									fill: FILL_COLOR,
+									strokeWidth: 1,
+									clampToGround: false,
+								}),
+							);
+							if (cancelled) return;
+							admin1CacheRef.current.set(code, dataSource);
+							dataSource.show = false;
+							viewer.dataSources.add(dataSource);
+						}
+					} finally {
+						loaded += 1;
+						setLoadProgressRef.current(loaded, codes.length);
+					}
 				}),
 			).then(() => {
 				if (cancelled) return;
@@ -390,24 +404,36 @@ export default function Globe() {
 					{toastMessage}
 				</div>
 			)}
-			<div className="pointer-events-auto absolute left-3 top-14 flex overflow-hidden rounded-lg border border-white/10 bg-slate-950/80 text-sm font-medium shadow-lg shadow-black/40 backdrop-blur-md sm:left-6 sm:top-16">
-				<button
-					onClick={() => setMode('country')}
-					className={`px-3 py-2 transition-colors ${
-						mode === 'country' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-900'
-					}`}
-				>
-					Country
-				</button>
-				<button
-					onClick={() => setMode('state')}
-					disabled={loadingStates}
-					className={`px-3 py-2 transition-colors disabled:cursor-wait disabled:opacity-70 ${
-						mode === 'state' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-900'
-					}`}
-				>
-					{loadingStates ? 'Loading…' : 'State'}
-				</button>
+			<div className="pointer-events-auto absolute left-3 top-14 flex flex-col overflow-hidden rounded-lg border border-white/10 bg-slate-950/80 text-sm font-medium shadow-lg shadow-black/40 backdrop-blur-md sm:left-6 sm:top-16">
+				<div className="flex">
+					<button
+						onClick={() => setMode('country')}
+						className={`px-3 py-2 transition-colors ${
+							mode === 'country' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-900'
+						}`}
+					>
+						Country
+					</button>
+					<button
+						onClick={() => setMode('state')}
+						disabled={loadingStates}
+						className={`px-3 py-2 tabular-nums transition-colors disabled:cursor-wait disabled:opacity-70 ${
+							mode === 'state' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-900'
+						}`}
+					>
+						{loadingStates ? `Loading ${loadProgress.loaded}/${loadProgress.total}` : 'State'}
+					</button>
+				</div>
+				{loadingStates && (
+					<div className="h-0.5 w-full bg-slate-800">
+						<div
+							className="h-full bg-blue-400 transition-all duration-150"
+							style={{
+								width: `${loadProgress.total > 0 ? (loadProgress.loaded / loadProgress.total) * 100 : 0}%`,
+							}}
+						/>
+					</div>
+				)}
 			</div>
 		</div>
 	);

@@ -8,6 +8,7 @@ import { getSubdivisionTerm } from '../lib/terminology';
 import { DEFAULT_COLOR } from '../lib/colors';
 import { subscribeToUserProfile } from '../lib/users';
 import { computeStats } from '../lib/stats';
+import geoCounts from '../data/geoCounts.json';
 
 declare global {
 	interface Window {
@@ -20,12 +21,7 @@ window.CESIUM_BASE_URL = '/cesium/';
 const FILL_COLOR = Cesium.Color.fromCssColorString('#1e293b').withAlpha(0.45);
 const STROKE_COLOR = Cesium.Color.fromCssColorString('#64748b');
 
-// Below this camera height, clicking targets a country's first-level
-// subdivisions instead of the country itself.
-const ADMIN1_ZOOM_HEIGHT = 2_500_000;
-// Below this camera height, clicking within the US targets counties instead
-// of the state. US-only, per the brief's MVP scope for level2 data.
-const COUNTY_ZOOM_HEIGHT = 400_000;
+type ViewMode = 'country' | 'state';
 
 function StatBar({
 	label,
@@ -71,22 +67,22 @@ export default function Globe() {
 	const viewerRef = useRef<Cesium.Viewer | null>(null);
 	const countriesDataSourceRef = useRef<Cesium.GeoJsonDataSource | null>(null);
 	const admin1CacheRef = useRef<Map<string, Cesium.GeoJsonDataSource>>(new Map());
-	const countyCacheRef = useRef<Map<string, Cesium.GeoJsonDataSource>>(new Map());
-	const activeDrillCountryRef = useRef<string | null>(null);
-	const activeDrillStateRef = useRef<string | null>(null);
 	const myVisitedIdsRef = useRef<Set<string>>(new Set());
 	const myColorRef = useRef<string>(DEFAULT_COLOR);
 	const countryNamesRef = useRef<Map<string, string>>(new Map());
 	const userIdRef = useRef<string | null>(null);
+	const modeRef = useRef<ViewMode>('country');
+	const applyModeVisibilityRef = useRef<(mode: ViewMode) => void>(() => {});
+	const loadAllAdmin1Ref = useRef<() => Promise<void>>(() => Promise.resolve());
 
 	const [userId, setUserId] = useState<string | null>(null);
 	const [hasProfile, setHasProfile] = useState(false);
 	const [myColor, setMyColor] = useState(DEFAULT_COLOR);
 	const [visitRecords, setVisitRecords] = useState<VisitRecord[]>([]);
 	const [toastMessage, setToastMessage] = useState<string | null>(null);
-	const [drillCountry, setDrillCountry] = useState<{ code: string; name: string } | null>(null);
-	const [drillState, setDrillState] = useState<{ code: string; name: string } | null>(null);
 	const [showStats, setShowStats] = useState(false);
+	const [mode, setMode] = useState<ViewMode>('country');
+	const [loadingStates, setLoadingStates] = useState(false);
 
 	useEffect(() => {
 		return onAuthStateChanged(auth, (user) => setUserId(user?.uid ?? null));
@@ -101,6 +97,15 @@ export default function Globe() {
 	useEffect(() => {
 		userIdRef.current = userId;
 	}, [userId]);
+
+	useEffect(() => {
+		modeRef.current = mode;
+		applyModeVisibilityRef.current(mode);
+		if (mode === 'state') {
+			setLoadingStates(true);
+			loadAllAdmin1Ref.current().finally(() => setLoadingStates(false));
+		}
+	}, [mode]);
 
 	const stats = useMemo(() => computeStats(visitRecords), [visitRecords]);
 
@@ -120,14 +125,6 @@ export default function Globe() {
 			}
 		}
 		for (const dataSource of admin1CacheRef.current.values()) {
-			for (const entity of dataSource.entities.values) {
-				if (!entity.polygon) continue;
-				const locationId = entity.properties?.LOCATION_ID?.getValue();
-				if (!locationId) continue;
-				entity.polygon.material = new Cesium.ColorMaterialProperty(colorForLocation(locationId));
-			}
-		}
-		for (const dataSource of countyCacheRef.current.values()) {
 			for (const entity of dataSource.entities.values) {
 				if (!entity.polygon) continue;
 				const locationId = entity.properties?.LOCATION_ID?.getValue();
@@ -198,200 +195,53 @@ export default function Globe() {
 		let handler: Cesium.ScreenSpaceEventHandler | undefined;
 		let cancelled = false;
 
-		function setCountryEntityVisible(countryCode: string, visible: boolean) {
-			const countriesDS = countriesDataSourceRef.current;
-			if (!countriesDS) return;
-			for (const entity of countriesDS.entities.values) {
-				if (entity.properties?.ISO_A3?.getValue() === countryCode) {
-					entity.show = visible;
-				}
-			}
-		}
-
-		function getCountryDisplayName(countryCode: string): string {
+		// Country mode shows only flat country polygons; state mode shows every
+		// country's first-level subdivisions instead. A country whose admin-1 data
+		// failed to load (or doesn't exist) keeps its flat polygon visible in state
+		// mode too, so it stays clickable as a country-level fallback.
+		function applyModeVisibility(currentMode: ViewMode) {
 			const countriesDS = countriesDataSourceRef.current;
 			if (countriesDS) {
 				for (const entity of countriesDS.entities.values) {
-					if (entity.properties?.ISO_A3?.getValue() === countryCode) {
-						return entity.properties?.NAME?.getValue() ?? countryCode;
-					}
+					const iso = entity.properties?.ISO_A3?.getValue();
+					const hasAdmin1 = iso ? admin1CacheRef.current.has(iso) : false;
+					entity.show = currentMode === 'country' || !hasAdmin1;
 				}
 			}
-			return countryCode;
-		}
-
-		function setStateEntityVisible(stateCode: string, visible: boolean) {
-			const usaAdmin1DS = admin1CacheRef.current.get('USA');
-			if (!usaAdmin1DS) return;
-			for (const entity of usaAdmin1DS.entities.values) {
-				if (entity.properties?.LOCATION_ID?.getValue() === `USA-${stateCode}`) {
-					entity.show = visible;
-				}
+			for (const dataSource of admin1CacheRef.current.values()) {
+				dataSource.show = currentMode === 'state';
 			}
 		}
+		applyModeVisibilityRef.current = applyModeVisibility;
 
-		function getStateDisplayName(stateCode: string): string {
-			const usaAdmin1DS = admin1CacheRef.current.get('USA');
-			if (usaAdmin1DS) {
-				for (const entity of usaAdmin1DS.entities.values) {
-					if (entity.properties?.LOCATION_ID?.getValue() === `USA-${stateCode}`) {
-						return entity.properties?.NAME?.getValue() ?? stateCode;
-					}
-				}
-			}
-			return stateCode;
-		}
-
-		function exitCountyMode() {
-			const active = activeDrillStateRef.current;
-			if (!active) return;
-			const activeDS = countyCacheRef.current.get(active);
-			if (activeDS) activeDS.show = false;
-			setStateEntityVisible(active, true);
-			activeDrillStateRef.current = null;
-			setDrillState(null);
-		}
-
-		async function drillIntoState(stateCode: string) {
-			const previous = activeDrillStateRef.current;
-			if (previous === stateCode) return;
-
-			if (previous) {
-				const previousDS = countyCacheRef.current.get(previous);
-				if (previousDS) previousDS.show = false;
-				setStateEntityVisible(previous, true);
-			}
-			setDrillState(null);
-
-			activeDrillStateRef.current = stateCode;
-			setStateEntityVisible(stateCode, false);
-
-			let dataSource = countyCacheRef.current.get(stateCode);
-			if (!dataSource) {
-				try {
-					dataSource = preparePolygonEntities(
-						await Cesium.GeoJsonDataSource.load(`/geo/counties/${stateCode}.geojson`, {
+		let admin1LoadPromise: Promise<void> | null = null;
+		function loadAllAdmin1(): Promise<void> {
+			if (admin1LoadPromise) return admin1LoadPromise;
+			const codes = Object.keys(geoCounts.admin1);
+			admin1LoadPromise = Promise.allSettled(
+				codes.map(async (code) => {
+					if (admin1CacheRef.current.has(code)) return;
+					const dataSource = preparePolygonEntities(
+						await Cesium.GeoJsonDataSource.load(`/geo/admin1/${code}.geojson`, {
 							stroke: STROKE_COLOR,
 							fill: FILL_COLOR,
 							strokeWidth: 1,
 							clampToGround: false,
 						}),
 					);
-				} catch {
-					setStateEntityVisible(stateCode, true);
-					activeDrillStateRef.current = null;
-					return;
-				}
+					if (cancelled) return;
+					admin1CacheRef.current.set(code, dataSource);
+					dataSource.show = false;
+					viewer.dataSources.add(dataSource);
+				}),
+			).then(() => {
 				if (cancelled) return;
-				countyCacheRef.current.set(stateCode, dataSource);
-				viewer.dataSources.add(dataSource);
-			}
-
-			dataSource.show = true;
-			applyVisitedColors();
-			setDrillState({ code: stateCode, name: getStateDisplayName(stateCode) });
+				applyModeVisibility(modeRef.current);
+				applyVisitedColors();
+			});
+			return admin1LoadPromise;
 		}
-
-		async function drillIntoCountry(countryCode: string) {
-			const previous = activeDrillCountryRef.current;
-			if (previous === countryCode) return;
-
-			exitCountyMode();
-
-			if (previous) {
-				const previousDS = admin1CacheRef.current.get(previous);
-				if (previousDS) previousDS.show = false;
-				setCountryEntityVisible(previous, true);
-			}
-			setDrillCountry(null);
-
-			activeDrillCountryRef.current = countryCode;
-			setCountryEntityVisible(countryCode, false);
-
-			let dataSource = admin1CacheRef.current.get(countryCode);
-			if (!dataSource) {
-				try {
-					dataSource = preparePolygonEntities(
-						await Cesium.GeoJsonDataSource.load(`/geo/admin1/${countryCode}.geojson`, {
-							stroke: STROKE_COLOR,
-							fill: FILL_COLOR,
-							strokeWidth: 1,
-							clampToGround: false,
-						}),
-					);
-				} catch {
-					// No admin-1 data for this country (e.g. Vatican City) — keep its flat polygon visible.
-					setCountryEntityVisible(countryCode, true);
-					activeDrillCountryRef.current = null;
-					return;
-				}
-				if (cancelled) return;
-				admin1CacheRef.current.set(countryCode, dataSource);
-				viewer.dataSources.add(dataSource);
-			}
-
-			dataSource.show = true;
-			applyVisitedColors();
-			setDrillCountry({ code: countryCode, name: getCountryDisplayName(countryCode) });
-		}
-
-		function exitDrillMode() {
-			exitCountyMode();
-			const active = activeDrillCountryRef.current;
-			if (!active) return;
-			const activeDS = admin1CacheRef.current.get(active);
-			if (activeDS) activeDS.show = false;
-			setCountryEntityVisible(active, true);
-			activeDrillCountryRef.current = null;
-			setDrillCountry(null);
-		}
-
-		function pickEntityAtCenter(): Cesium.Entity | undefined {
-			const canvas = viewer.scene.canvas;
-			const center = new Cesium.Cartesian2(canvas.clientWidth / 2, canvas.clientHeight / 2);
-			const picked = viewer.scene.pick(center);
-			return Cesium.defined(picked) && picked.id instanceof Cesium.Entity ? picked.id : undefined;
-		}
-
-		function handleZoomChange() {
-			const height = viewer.camera.positionCartographic.height;
-
-			if (height >= ADMIN1_ZOOM_HEIGHT) {
-				exitDrillMode();
-				return;
-			}
-
-			const centerEntity = pickEntityAtCenter();
-			const props = centerEntity?.properties;
-			const locationType = props?.LOCATION_TYPE?.getValue();
-
-			const countryCode =
-				locationType === 'level2'
-					? 'USA'
-					: locationType === 'level1'
-						? props?.ADM0_A3?.getValue()
-						: props?.ISO_A3?.getValue();
-
-			if (countryCode && countryCode !== activeDrillCountryRef.current) {
-				drillIntoCountry(countryCode);
-			}
-
-			if (height >= COUNTY_ZOOM_HEIGHT || activeDrillCountryRef.current !== 'USA') {
-				exitCountyMode();
-				return;
-			}
-
-			const stateCode =
-				locationType === 'level1'
-					? props?.LOCATION_ID?.getValue()?.split('-')[1]
-					: locationType === 'level2'
-						? props?.STATE?.getValue()
-						: undefined;
-
-			if (stateCode && stateCode !== activeDrillStateRef.current) {
-				drillIntoState(stateCode);
-			}
-		}
+		loadAllAdmin1Ref.current = loadAllAdmin1;
 
 		Cesium.GeoJsonDataSource.load('/geo/countries.geojson', {
 			stroke: STROKE_COLOR,
@@ -408,9 +258,9 @@ export default function Globe() {
 				const name = entity.properties?.NAME?.getValue();
 				if (iso && name && !countryNamesRef.current.has(iso)) countryNamesRef.current.set(iso, name);
 			}
+			applyModeVisibility(modeRef.current);
 			applyVisitedColors();
 
-			viewer.camera.moveEnd.addEventListener(handleZoomChange);
 			if (import.meta.env.DEV) {
 				(window as any).__viewer = viewer;
 				(window as any).__Cesium = Cesium;
@@ -434,16 +284,11 @@ export default function Globe() {
 				const locationType = props?.LOCATION_TYPE?.getValue();
 
 				let locationId: string;
-				let visitLocationType: 'country' | 'level1' | 'level2';
+				let visitLocationType: 'country' | 'level1';
 				let countryCode: string;
 				let displayName: string;
 
-				if (locationType === 'level2') {
-					locationId = props?.LOCATION_ID?.getValue();
-					countryCode = 'USA';
-					visitLocationType = 'level2';
-					displayName = props?.NAME?.getValue() ?? locationId;
-				} else if (locationType === 'level1') {
+				if (locationType === 'level1') {
 					locationId = props?.LOCATION_ID?.getValue();
 					countryCode = props?.ADM0_A3?.getValue();
 					visitLocationType = 'level1';
@@ -468,15 +313,11 @@ export default function Globe() {
 
 		return () => {
 			cancelled = true;
-			viewer.camera.moveEnd.removeEventListener(handleZoomChange);
 			handler?.destroy();
 			viewer.destroy();
 			viewerRef.current = null;
 			countriesDataSourceRef.current = null;
 			admin1CacheRef.current.clear();
-			countyCacheRef.current.clear();
-			activeDrillCountryRef.current = null;
-			activeDrillStateRef.current = null;
 		};
 	}, []);
 
@@ -526,7 +367,6 @@ export default function Globe() {
 					</div>
 					<div className="flex flex-col gap-2 border-t border-slate-800 pt-3">
 						<StatBar label="US States" visited={stats.statesVisited} total={stats.stateTotal} color={myColor} />
-						<StatBar label="US Counties" visited={stats.countiesVisited} total={stats.countyTotal} color={myColor} />
 					</div>
 					{stats.subdivisionsByCountry.length > 0 && (
 						<div className="flex flex-col gap-1 border-t border-slate-800 pt-3">
@@ -550,17 +390,25 @@ export default function Globe() {
 					{toastMessage}
 				</div>
 			)}
-			{drillState ? (
-				<div className="pointer-events-none absolute left-6 top-16 max-w-[calc(100vw-3rem)] truncate rounded-lg border border-white/10 bg-slate-950/80 px-3 py-1.5 text-sm text-slate-200 shadow-lg shadow-black/40 backdrop-blur-md animate-fade-in">
-					{drillState.name} — {getSubdivisionTerm('USA', 'level2').plural}
-				</div>
-			) : (
-				drillCountry && (
-					<div className="pointer-events-none absolute left-6 top-16 max-w-[calc(100vw-3rem)] truncate rounded-lg border border-white/10 bg-slate-950/80 px-3 py-1.5 text-sm text-slate-200 shadow-lg shadow-black/40 backdrop-blur-md animate-fade-in">
-						{drillCountry.name} — {getSubdivisionTerm(drillCountry.code, 'level1').plural}
-					</div>
-				)
-			)}
+			<div className="pointer-events-auto absolute left-3 top-14 flex overflow-hidden rounded-lg border border-white/10 bg-slate-950/80 text-sm font-medium shadow-lg shadow-black/40 backdrop-blur-md sm:left-6 sm:top-16">
+				<button
+					onClick={() => setMode('country')}
+					className={`px-3 py-2 transition-colors ${
+						mode === 'country' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-900'
+					}`}
+				>
+					Country
+				</button>
+				<button
+					onClick={() => setMode('state')}
+					disabled={loadingStates}
+					className={`px-3 py-2 transition-colors disabled:cursor-wait disabled:opacity-70 ${
+						mode === 'state' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-900'
+					}`}
+				>
+					{loadingStates ? 'Loading…' : 'State'}
+				</button>
+			</div>
 		</div>
 	);
 }

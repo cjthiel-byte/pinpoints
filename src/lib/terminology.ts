@@ -5,7 +5,6 @@ export interface SubdivisionTerm {
 
 interface CountryTerminology {
 	level1: SubdivisionTerm;
-	level2?: SubdivisionTerm;
 }
 
 const DEFAULT_TERM: SubdivisionTerm = { name: 'Region', plural: 'Regions' };
@@ -15,10 +14,7 @@ const DEFAULT_TERM: SubdivisionTerm = { name: 'Region', plural: 'Regions' };
 // single source of truth for subdivision naming — apply it everywhere a
 // subdivision name is shown rather than hardcoding per-country strings.
 const TERMINOLOGY: Record<string, CountryTerminology> = {
-	USA: {
-		level1: { name: 'State', plural: 'States' },
-		level2: { name: 'County', plural: 'Counties' },
-	},
+	USA: { level1: { name: 'State', plural: 'States' } },
 	CAN: { level1: { name: 'Province', plural: 'Provinces' } },
 	JPN: { level1: { name: 'Prefecture', plural: 'Prefectures' } },
 	GBR: { level1: { name: 'Country', plural: 'Countries' } },
@@ -30,6 +26,6 @@ const TERMINOLOGY: Record<string, CountryTerminology> = {
 	ESP: { level1: { name: 'Autonomous Community', plural: 'Autonomous Communities' } },
 };
 
-export function getSubdivisionTerm(countryCode: string, level: 'level1' | 'level2'): SubdivisionTerm {
+export function getSubdivisionTerm(countryCode: string, level: 'level1'): SubdivisionTerm {
 	return TERMINOLOGY[countryCode]?.[level] ?? DEFAULT_TERM;
 }

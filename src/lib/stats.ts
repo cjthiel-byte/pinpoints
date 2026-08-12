@@ -19,8 +19,6 @@ export interface Stats {
 	countryTotal: number;
 	statesVisited: number;
 	stateTotal: number;
-	countiesVisited: number;
-	countyTotal: number;
 	subdivisionsByCountry: CountrySubdivisionStat[];
 }
 
@@ -29,7 +27,6 @@ const admin1Counts: Record<string, number> = geoCounts.admin1;
 export function computeStats(records: VisitRecord[]): Stats {
 	const countries = new Set<string>();
 	const states = new Set<string>();
-	const counties = new Set<string>();
 	const subdivisionsByCountry = new Map<string, Set<string>>();
 
 	for (const r of records) {
@@ -41,8 +38,6 @@ export function computeStats(records: VisitRecord[]): Stats {
 			if (r.countryCode === 'USA' && US_STATE_CODES.includes(r.locationId.replace('USA-', ''))) {
 				states.add(r.locationId);
 			}
-		} else if (r.locationType === 'level2') {
-			counties.add(r.locationId);
 		}
 	}
 
@@ -59,8 +54,6 @@ export function computeStats(records: VisitRecord[]): Stats {
 		countryTotal: geoCounts.countryTotal,
 		statesVisited: states.size,
 		stateTotal: US_STATE_CODES.length,
-		countiesVisited: counties.size,
-		countyTotal: geoCounts.countyTotal,
 		subdivisionsByCountry: subdivisionStats,
 	};
 }

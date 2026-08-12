@@ -1,7 +1,7 @@
 import { collection, deleteDoc, doc, onSnapshot, query, serverTimestamp, setDoc, where } from 'firebase/firestore';
 import { db } from './firebase';
 
-export type LocationType = 'country' | 'level1' | 'level2';
+export type LocationType = 'country' | 'level1';
 
 export interface VisitInput {
 	locationId: string;

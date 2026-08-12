@@ -2,7 +2,7 @@
 
 ## Overview
 
-A private web application for tracking places visited around the world. Features an interactive 3D globe with progressive zoom detail — users can click countries when zoomed out, then drill into first-level subdivisions (states, provinces, prefectures, etc.), with full county-level detail for the United States.
+A private web application for tracking places visited around the world. Features an interactive 3D globe with an explicit Country/State mode toggle — Country mode shows countries as clickable polygons, State mode shows every country's first-level subdivisions (states, provinces, prefectures, etc.) instead. County-level detail was explored and then dropped from scope.
 
 Named "Pinpoints" for the classic act of putting a pin on the map for each place you've been.
 
@@ -17,19 +17,18 @@ Named "Pinpoints" for the classic act of putting a pin on the map for each place
 ### The Globe
 
 - Interactive 3D globe using **Cesium.js**
-- Smooth zoom from world view down to county level (US only)
-- Rotate, pan, and zoom controls (mouse + touch)
-- Countries render as colored polygons when zoomed out
-- Zooming in progressively reveals subdivisions
+- Explicit Country/State mode toggle (not zoom-driven)
+- Rotate, pan, and zoom controls (mouse + touch), fully user-controlled — zoom is never read by app logic
+- Countries render as colored polygons in Country mode; every country's first-level subdivisions render instead in State mode
 - Visited locations show a distinct color per user
 
 ### Tiered Selection (Global)
 
-Progressive geographic drill-down as user zooms in:
+An explicit mode toggle, not zoom-driven:
 
-**World zoom (out):** Click a country to toggle "visited"
+**Country mode:** Click a country to toggle "visited"
 
-**Country zoom (in):** Click a first-level subdivision to toggle "visited"
+**State mode:** Click a first-level subdivision to toggle "visited". Countries without subdivision data keep their flat, clickable country polygon as a fallback.
 
 Terminology adapts to the country being viewed:
 - USA → "States"
@@ -44,9 +43,7 @@ Terminology adapts to the country being viewed:
 - Spain → "Autonomous Communities"
 - All other countries → generic "Regions" as default, override where data is available
 
-**State zoom (US only):** Click a county to toggle "visited"
-
-**Important scope note:** Second-level (county-equivalent) subdivisions are **US-only for MVP**. All other countries stop at level 1 (states/provinces/etc.). This significantly reduces data complexity while covering the primary use case (US-based user with domestic travel).
+**Important scope note:** Second-level (county-equivalent) subdivisions were implemented for the US and then removed from scope. All countries stop at level 1 (states/provinces/etc.).
 
 ### Terminology Display Layer
 
@@ -55,8 +52,7 @@ The app should have a JSON config that maps country codes to their subdivision t
 ```json
 {
   "USA": {
-    "level1": { "name": "State", "plural": "States" },
-    "level2": { "name": "County", "plural": "Counties" }
+    "level1": { "name": "State", "plural": "States" }
   },
   "CAN": {
     "level1": { "name": "Province", "plural": "Provinces" }
@@ -117,7 +113,6 @@ The UI dynamically uses these labels based on which country the user is looking 
 Show for the current user:
 - Total countries visited (out of ~195)
 - Total US states visited (out of 50)
-- Total US counties visited (out of ~3,143)
 - Per-country subdivision counts where applicable (e.g., "12 of 47 Prefectures in Japan")
 - Global % of countries visited
 - Same stats aggregated for "all users combined"
@@ -161,10 +156,8 @@ All public-domain, downloaded once and served as GeoJSON from `/public/geo/`:
 
 - **Countries:** Natural Earth (naturalearthdata.com) — public domain
 - **First-level subdivisions (global):** Natural Earth Admin 1 (states/provinces/etc. for every country) — public domain
-- **US states:** US Census TIGER/Line shapefiles — public domain
-- **US counties:** US Census TIGER/Line shapefiles — public domain
 
-Convert to GeoJSON format (or vector tiles for US counties due to size) before deployment.
+Convert to GeoJSON format before deployment.
 
 ## Data Model (Firestore)
 
@@ -180,13 +173,11 @@ visits/
   {visitId}/
     userId: string
     countryCode: string       // ISO Alpha-3, e.g., "USA", "JPN"
-    locationType: "country" | "level1" | "level2"
+    locationType: "country" | "level1"
     locationId: string
       // country: ISO Alpha-3 (e.g., "USA", "JPN")
       // level1: {country}-{code} (e.g., "USA-CA", "JPN-13")
-      // level2: {country}-{level1}-{code} (e.g., "USA-CA-Los_Angeles")
-      //   NOTE: Level 2 is US-only for MVP
-    displayName: string       // Human-readable, e.g., "California", "Shibuya", "Allegheny County"
+    displayName: string       // Human-readable, e.g., "California", "Shibuya"
     dateVisited: string (optional, e.g., "2023")
     notes: string (optional)
     createdAt: timestamp
@@ -197,7 +188,6 @@ visits/
 - Users can only write to their own `users/{userId}` document
 - Users can only create/update/delete visits where `userId` matches their auth ID
 - Anyone authenticated can read all users and all visits (needed for "all users" view)
-- Enforce that `locationType: "level2"` visits must have `countryCode: "USA"` (server-side rule)
 
 ## Auth Implementation
 
@@ -214,7 +204,7 @@ visits/
 3. **Sprint 3:** Firestore integration, persist visited countries per user, load on login
 4. **Sprint 4:** Add first-level subdivision (state/province/prefecture) layer using Natural Earth Admin 1 data. Click-to-toggle.
 5. **Sprint 5:** Design and implement terminology system for subdivision labels. Wire into UI.
-6. **Sprint 6:** Add US counties layer with click handling (vector tiles for performance). Only loads when zoomed into US.
+6. **Sprint 6:** ~~Add US counties layer~~ — implemented, then removed in favor of an explicit Country/State mode toggle (see "Known Technical Challenges").
 7. **Sprint 7:** User color system, "all users" overlay view with color blending
 8. **Sprint 8:** Stats panel with country-specific terminology
 9. **Sprint 9:** UI polish, transitions, mobile responsiveness testing
@@ -256,12 +246,11 @@ Estimated timeline: 8-12 weekends of casual work.
 
 ## Known Technical Challenges
 
-1. **US county data is large** — over 3,000 counties. Need vector tiles or LOD (level of detail) rendering. Only load when user zooms into US.
+1. ~~US county data is large~~ — moot: county support was removed from scope entirely.
 2. **Cesium.js has a learning curve** — plan for 1-2 sprints to get comfortable with it
 3. **Terminology display logic** — needs consistent handling across all UI components
-4. **Progressive data loading** — don't load all geo data at once; load per-country as user zooms in
+4. **State-mode data loading** — switching into State mode fetches all countries' first-level subdivision GeoJSON (~29MB across ~236 files) in parallel and caches it in memory for the session; shows a loading state on the toggle while in flight.
 5. **Mobile touch controls on 3D globe** — needs testing and possibly custom handling
-6. **Level of detail transitions** — smooth switching between country/state/county visualization based on zoom level
 
 ## Getting Started for Claude Code
 
